@@ -1,0 +1,75 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+
+  color-scheme: light dark;
+  color: rgba(255, 255, 255, 0.87);
+  background-color: #242424;
+
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  margin: 0;
+  display: flex;
+  place-items: center;
+  min-width: 320px;
+  min-height: 100vh;
+}
+
+#app {
+  width: 100%;
+  height: 100vh;
+  margin: 0;
+  padding: 0;
+}
+
+/* 强制覆盖 Monaco 在浅色模式下的默认背景 */
+.theme-light .monaco-editor,
+.theme-light .monaco-editor-background,
+.theme-light .monaco-editor .margin-view-overlays {
+  background-color: inherit !important;
+}
+
+.theme-dark .monaco-editor,
+.theme-dark .monaco-editor-background,
+.theme-dark .monaco-editor .margin-view-overlays {
+  background-color: #1e1e1e !important;
+}
+
+/* Monaco Editor Transparency */
+.monaco-editor .scroll-decoration {
+  background-color: transparent !important;
+  background: transparent !important;
+  opacity: 1 !important;
+  box-shadow: none !important;
+}
+
+/* N-Split Divider Transparency */
+.n-split,
+.n-split .n-split-pane-1,
+.n-split .n-split-pane-2,
+.n-split-resize-trigger,
+.n-split-resize-trigger__line {
+  background-color: transparent !important;
+}
+
+/* Monaco Editor Search Highlight */
+.search-highlight {
+  background-color: rgba(255, 235, 59, 0.4); /* 半透明黄色 */
+  border-bottom: 2px solid #fdd835;
+  border-radius: 2px;
+}
+
+.dark .search-highlight {
+  background-color: rgba(255, 235, 59, 0.2);
+  border-bottom: 2px solid #fdd835;
+}
