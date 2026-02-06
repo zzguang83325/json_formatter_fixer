@@ -5,6 +5,9 @@ on:
     tags:
       - 'v*'
 
+permissions:
+  contents: write
+
 jobs:
   build:
     strategy:
@@ -49,31 +52,43 @@ jobs:
       - name: Build Application
         run: |
           export PATH=$PATH:$(go env GOPATH)/bin
-          wails build -platform ${{ matrix.platform }}
+          wails build -platform ${{ matrix.platform }} -clean
+          ls -R build/bin
         shell: bash
 
       - name: Package Windows
         if: matrix.os == 'windows-latest'
         run: |
-          powershell Compress-Archive -Path build/bin/${{ matrix.artifact }} -DestinationPath ${{ matrix.artifact }}.zip
+          powershell Compress-Archive -Path build/bin/* -DestinationPath ${{ matrix.artifact }}.zip
 
       - name: Package macOS
         if: matrix.os == 'macos-latest'
         run: |
           # macOS .app is a directory, need to zip it
           cd build/bin
-          zip -r ../../${{ matrix.artifact }}.zip ${{ matrix.artifact }}
+          # 查找任何以 .app 结尾的目录并压缩
+          APP_NAME=$(find . -name "*.app" -type d -maxdepth 1)
+          if [ -n "$APP_NAME" ]; then
+            zip -r ../../${{ matrix.artifact }}.zip "$APP_NAME"
+          else
+            echo "Error: .app bundle not found"
+            ls -la
+            exit 1
+          fi
 
       - name: Package Linux
         if: matrix.os == 'ubuntu-22.04'
         run: |
-          tar -czvf ${{ matrix.artifact }}-linux.tar.gz -C build/bin ${{ matrix.artifact }}
+          tar -czvf ${{ matrix.artifact }}-linux.tar.gz -C build/bin .
 
       - name: Upload Artifacts
         uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
         with:
           files: |
             *.zip
             *.tar.gz
+          fail_on_unmatched_files: false
+          generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
