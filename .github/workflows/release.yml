@@ -52,7 +52,11 @@ jobs:
       - name: Build Application
         run: |
           export PATH=$PATH:$(go env GOPATH)/bin
-          wails build -platform ${{ matrix.platform }} -clean
+          if [ "${{ matrix.os }}" = "ubuntu-22.04" ]; then
+            wails build -platform ${{ matrix.platform }} -clean -tags webkit2_41
+          else
+            wails build -platform ${{ matrix.platform }} -clean
+          fi
           ls -R build/bin
         shell: bash
 

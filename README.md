@@ -87,6 +87,18 @@ make linux
 make all
 ```
 
+### Linux 依赖安装 (Ubuntu/Debian)
+
+在 Linux (如 Ubuntu 24.04) 上运行或构建应用前，需要安装必要的系统库：
+
+```bash
+# 安装运行和构建依赖
+sudo apt update
+sudo apt install -y libgtk-3-dev libwebkit2gtk-4.1-dev pkg-config build-essential
+```
+
+> **注意**：Ubuntu 24.04 不再支持 `libwebkit2gtk-4.0`。我们在构建时已默认添加了 `-tags webkit2_41` 标签以适配最新系统。如果您在旧版本 Linux 上构建，可能需要去掉该标签。
+
 ## 📖 使用方法
 
 1.  打开应用。

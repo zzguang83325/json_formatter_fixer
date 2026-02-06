@@ -31,8 +31,8 @@ darwin:
 
 # Build for Linux
 linux:
-	@echo "Building for Linux..."
-	wails build -platform linux/amd64
+	@echo "Building for Linux (Ubuntu 24.04+ compatibility)..."
+	wails build -platform linux/amd64 -tags webkit2_41
 
 # Clean build artifacts
 clean:
