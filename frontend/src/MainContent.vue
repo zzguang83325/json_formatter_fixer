@@ -223,8 +223,11 @@
         <span>编码: UTF-8</span>
       </div>
       <div class="flex-1"></div>
-      <div class="flex items-center gap-2" style="padding-right: 10px;">
-        <div >JSON Formatter & Fixer</div>
+      <div class="flex flex-col items-end gap-0.5" style="padding-right: 10px;">
+       
+        <div class="cursor-pointer hover:text-blue-500 transition-colors text-xs" @click="handleOpenLink('https://github.com/zzguang83325/json_formatter_fixer')">
+          https://github.com/zzguang83325/json_formatter_fixer
+        </div>
       </div>
     </footer>
   </div>

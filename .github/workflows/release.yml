@@ -8,6 +8,7 @@ on:
 jobs:
   build:
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: windows-latest
@@ -16,7 +17,7 @@ jobs:
           - os: macos-latest
             platform: darwin/universal
             artifact: Json-Formatter-Fixer.app
-          - os: ubuntu-latest
+          - os: ubuntu-22.04
             platform: linux/amd64
             artifact: Json-Formatter-Fixer
 
@@ -40,14 +41,16 @@ jobs:
         run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.11.0
 
       - name: Install Linux Dependencies
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.os == 'ubuntu-22.04'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev pkg-config
 
       - name: Build Application
         run: |
+          export PATH=$PATH:$(go env GOPATH)/bin
           wails build -platform ${{ matrix.platform }}
+        shell: bash
 
       - name: Package Windows
         if: matrix.os == 'windows-latest'
@@ -62,7 +65,7 @@ jobs:
           zip -r ../../${{ matrix.artifact }}.zip ${{ matrix.artifact }}
 
       - name: Package Linux
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.os == 'ubuntu-22.04'
         run: |
           tar -czvf ${{ matrix.artifact }}-linux.tar.gz -C build/bin ${{ matrix.artifact }}
 
