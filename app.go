@@ -196,6 +196,829 @@ func (a *App) ConvertToYAML(input string, trimWhitespace bool) JSONResponse {
 	return JSONResponse{Success: true, Data: string(yamlData)}
 }
 
+// ConvertToJavaClass converts JSON to Java class
+func (a *App) ConvertToJavaClass(input string, trimWhitespace bool, className string) JSONResponse {
+	var obj interface{}
+	err := json.Unmarshal([]byte(input), &obj)
+	if err != nil {
+		resp := a.ProcessJSON(input, "4", trimWhitespace)
+		if !resp.Success {
+			return resp
+		}
+		json.Unmarshal([]byte(resp.Data), &obj)
+	} else if trimWhitespace {
+		obj = a.trimStrings(obj)
+	}
+
+	if className == "" {
+		className = "RootClass"
+	}
+
+	javaCode := a.generateJavaClass(className, obj)
+	return JSONResponse{Success: true, Data: javaCode}
+}
+
+// generateJavaClass generates Java class code from interface{}
+func (a *App) generateJavaClass(className string, obj interface{}) string {
+	var builder strings.Builder
+	classes := make(map[string]string)
+
+	a.collectJavaClasses(className, obj, classes)
+
+	for _, classDef := range classes {
+		builder.WriteString(classDef)
+		builder.WriteString("\n")
+	}
+
+	return builder.String()
+}
+
+// collectJavaClasses recursively collects all Java class definitions
+func (a *App) collectJavaClasses(className string, obj interface{}, classes map[string]string) {
+	if _, exists := classes[className]; exists {
+		return
+	}
+
+	switch v := obj.(type) {
+	case map[string]interface{}:
+		var builder strings.Builder
+		builder.WriteString("import java.util.*;\n\n")
+		builder.WriteString("public class ")
+		builder.WriteString(className)
+		builder.WriteString(" {\n")
+
+		for key, value := range v {
+			fieldName := toCamelCase(key)
+			javaType := a.getJavaType(value, className, fieldName)
+			builder.WriteString("    private ")
+			builder.WriteString(javaType)
+			builder.WriteString(" ")
+			builder.WriteString(fieldName)
+			builder.WriteString(";\n")
+
+			if nestedMap, ok := value.(map[string]interface{}); ok {
+				nestedClassName := strings.ToUpper(fieldName[:1]) + fieldName[1:]
+				a.collectJavaClasses(nestedClassName, nestedMap, classes)
+			} else if nestedArray, ok := value.([]interface{}); ok && len(nestedArray) > 0 {
+				if nestedMap, ok := nestedArray[0].(map[string]interface{}); ok {
+					nestedClassName := strings.ToUpper(fieldName[:1]) + fieldName[1:]
+					a.collectJavaClasses(nestedClassName, nestedMap, classes)
+				}
+			}
+		}
+
+		builder.WriteString("\n")
+		for key := range v {
+			fieldName := toCamelCase(key)
+			capitalized := strings.ToUpper(fieldName[:1]) + fieldName[1:]
+
+			builder.WriteString("    public ")
+			builder.WriteString(capitalized)
+			builder.WriteString(" get")
+			builder.WriteString(capitalized)
+			builder.WriteString("() {\n")
+			builder.WriteString("        return this.")
+			builder.WriteString(fieldName)
+			builder.WriteString(";\n")
+			builder.WriteString("    }\n\n")
+
+			builder.WriteString("    public void set")
+			builder.WriteString(capitalized)
+			builder.WriteString("(")
+			builder.WriteString(a.getJavaType(v[key], className, fieldName))
+			builder.WriteString(" ")
+			builder.WriteString(fieldName)
+			builder.WriteString(") {\n")
+			builder.WriteString("        this.")
+			builder.WriteString(fieldName)
+			builder.WriteString(" = ")
+			builder.WriteString(fieldName)
+			builder.WriteString(";\n")
+			builder.WriteString("    }\n\n")
+		}
+
+		builder.WriteString("}")
+		classes[className] = builder.String()
+
+	case []interface{}:
+		if len(v) > 0 {
+			a.collectJavaClasses(className, v[0], classes)
+		}
+	}
+}
+
+// getJavaType returns Java type for a value
+func (a *App) getJavaType(value interface{}, className string, fieldName string) string {
+	switch v := value.(type) {
+	case float64:
+		if v == float64(int64(v)) {
+			return "Integer"
+		}
+		return "Double"
+	case bool:
+		return "Boolean"
+	case string:
+		return "String"
+	case map[string]interface{}:
+		return strings.ToUpper(fieldName[:1]) + fieldName[1:]
+	case []interface{}:
+		if len(v) > 0 {
+			elemType := a.getJavaType(v[0], className, fieldName)
+			return "List<" + elemType + ">"
+		}
+		return "List<Object>"
+	case nil:
+		return "Object"
+	default:
+		return "Object"
+	}
+}
+
+// ConvertToGoStruct converts JSON to Go struct
+func (a *App) ConvertToGoStruct(input string, trimWhitespace bool, structName string) JSONResponse {
+	var obj interface{}
+	err := json.Unmarshal([]byte(input), &obj)
+	if err != nil {
+		resp := a.ProcessJSON(input, "4", trimWhitespace)
+		if !resp.Success {
+			return resp
+		}
+		json.Unmarshal([]byte(resp.Data), &obj)
+	} else if trimWhitespace {
+		obj = a.trimStrings(obj)
+	}
+
+	if structName == "" {
+		structName = "RootStruct"
+	}
+
+	goCode := a.generateGoStruct(structName, obj)
+	return JSONResponse{Success: true, Data: goCode}
+}
+
+// generateGoStruct generates Go struct code from interface{}
+func (a *App) generateGoStruct(structName string, obj interface{}) string {
+	var builder strings.Builder
+	structs := make(map[string]string)
+
+	a.collectGoStructs(structName, obj, structs)
+
+	for _, structDef := range structs {
+		builder.WriteString(structDef)
+		builder.WriteString("\n")
+	}
+
+	return builder.String()
+}
+
+// collectGoStructs recursively collects all Go struct definitions
+func (a *App) collectGoStructs(structName string, obj interface{}, structs map[string]string) {
+	if _, exists := structs[structName]; exists {
+		return
+	}
+
+	switch v := obj.(type) {
+	case map[string]interface{}:
+		var builder strings.Builder
+		builder.WriteString("type ")
+		builder.WriteString(structName)
+		builder.WriteString(" struct {\n")
+
+		for key, value := range v {
+			fieldName := toPascalCase(key)
+			goType := a.getGoType(value, structName, fieldName)
+			builder.WriteString("    ")
+			builder.WriteString(fieldName)
+			builder.WriteString(" ")
+			builder.WriteString(goType)
+			builder.WriteString(" `json:\"")
+			builder.WriteString(key)
+			builder.WriteString("\"`\n")
+
+			if nestedMap, ok := value.(map[string]interface{}); ok {
+				nestedStructName := fieldName
+				a.collectGoStructs(nestedStructName, nestedMap, structs)
+			} else if nestedArray, ok := value.([]interface{}); ok && len(nestedArray) > 0 {
+				if nestedMap, ok := nestedArray[0].(map[string]interface{}); ok {
+					nestedStructName := fieldName
+					a.collectGoStructs(nestedStructName, nestedMap, structs)
+				}
+			}
+		}
+
+		builder.WriteString("}")
+		structs[structName] = builder.String()
+
+	case []interface{}:
+		if len(v) > 0 {
+			a.collectGoStructs(structName, v[0], structs)
+		}
+	}
+}
+
+// getGoType returns Go type for a value
+func (a *App) getGoType(value interface{}, structName string, fieldName string) string {
+	switch v := value.(type) {
+	case float64:
+		if v == float64(int64(v)) {
+			return "int"
+		}
+		return "float64"
+	case bool:
+		return "bool"
+	case string:
+		return "string"
+	case map[string]interface{}:
+		return fieldName
+	case []interface{}:
+		if len(v) > 0 {
+			elemType := a.getGoType(v[0], structName, fieldName)
+			return "[]" + elemType
+		}
+		return "[]interface{}"
+	case nil:
+		return "interface{}"
+	default:
+		return "interface{}"
+	}
+}
+
+// ConvertToPythonClass converts JSON to Python class
+func (a *App) ConvertToPythonClass(input string, trimWhitespace bool, className string) JSONResponse {
+	var obj interface{}
+	err := json.Unmarshal([]byte(input), &obj)
+	if err != nil {
+		resp := a.ProcessJSON(input, "4", trimWhitespace)
+		if !resp.Success {
+			return resp
+		}
+		json.Unmarshal([]byte(resp.Data), &obj)
+	} else if trimWhitespace {
+		obj = a.trimStrings(obj)
+	}
+
+	if className == "" {
+		className = "RootClass"
+	}
+
+	pythonCode := a.generatePythonClass(className, obj)
+	return JSONResponse{Success: true, Data: pythonCode}
+}
+
+// generatePythonClass generates Python class code from interface{}
+func (a *App) generatePythonClass(className string, obj interface{}) string {
+	var builder strings.Builder
+	classes := make(map[string]string)
+
+	a.collectPythonClasses(className, obj, classes)
+
+	for _, classDef := range classes {
+		builder.WriteString(classDef)
+		builder.WriteString("\n")
+	}
+
+	return builder.String()
+}
+
+// collectPythonClasses recursively collects all Python class definitions
+func (a *App) collectPythonClasses(className string, obj interface{}, classes map[string]string) {
+	if _, exists := classes[className]; exists {
+		return
+	}
+
+	switch v := obj.(type) {
+	case map[string]interface{}:
+		var builder strings.Builder
+		builder.WriteString("class ")
+		builder.WriteString(className)
+		builder.WriteString(":\n")
+
+		for key, value := range v {
+			fieldName := toSnakeCase(key)
+			pythonType := a.getPythonType(value, className, fieldName)
+			builder.WriteString("    ")
+			builder.WriteString(fieldName)
+			builder.WriteString(": ")
+			builder.WriteString(pythonType)
+			builder.WriteString("\n")
+
+			if nestedMap, ok := value.(map[string]interface{}); ok {
+				nestedClassName := toPascalCase(key)
+				a.collectPythonClasses(nestedClassName, nestedMap, classes)
+			} else if nestedArray, ok := value.([]interface{}); ok && len(nestedArray) > 0 {
+				if nestedMap, ok := nestedArray[0].(map[string]interface{}); ok {
+					nestedClassName := toPascalCase(key)
+					a.collectPythonClasses(nestedClassName, nestedMap, classes)
+				}
+			}
+		}
+
+		classes[className] = builder.String()
+
+	case []interface{}:
+		if len(v) > 0 {
+			a.collectPythonClasses(className, v[0], classes)
+		}
+	}
+}
+
+// getPythonType returns Python type for a value
+func (a *App) getPythonType(value interface{}, className string, fieldName string) string {
+	switch v := value.(type) {
+	case float64:
+		if v == float64(int64(v)) {
+			return "int"
+		}
+		return "float"
+	case bool:
+		return "bool"
+	case string:
+		return "str"
+	case map[string]interface{}:
+		return toPascalCase(fieldName)
+	case []interface{}:
+		if len(v) > 0 {
+			elemType := a.getPythonType(v[0], className, fieldName)
+			return "list[" + elemType + "]"
+		}
+		return "list"
+	case nil:
+		return "Optional[Any] = None"
+	default:
+		return "Any"
+	}
+}
+
+// toSnakeCase converts camelCase or PascalCase to snake_case
+func toSnakeCase(s string) string {
+	var result []rune
+	for i, r := range s {
+		if i > 0 && r >= 'A' && r <= 'Z' {
+			result = append(result, '_')
+		}
+		result = append(result, r)
+	}
+	return strings.ToLower(string(result))
+}
+
+// ConvertToTypeScriptInterface converts JSON to TypeScript interface
+func (a *App) ConvertToTypeScriptInterface(input string, trimWhitespace bool, interfaceName string) JSONResponse {
+	var obj interface{}
+	err := json.Unmarshal([]byte(input), &obj)
+	if err != nil {
+		resp := a.ProcessJSON(input, "4", trimWhitespace)
+		if !resp.Success {
+			return resp
+		}
+		json.Unmarshal([]byte(resp.Data), &obj)
+	} else if trimWhitespace {
+		obj = a.trimStrings(obj)
+	}
+
+	if interfaceName == "" {
+		interfaceName = "RootInterface"
+	}
+
+	tsCode := a.generateTypeScriptInterface(interfaceName, obj)
+	return JSONResponse{Success: true, Data: tsCode}
+}
+
+// generateTypeScriptInterface generates TypeScript interface code from interface{}
+func (a *App) generateTypeScriptInterface(interfaceName string, obj interface{}) string {
+	var builder strings.Builder
+	interfaces := make(map[string]string)
+
+	a.collectTypeScriptInterfaces(interfaceName, obj, interfaces)
+
+	for _, interfaceDef := range interfaces {
+		builder.WriteString(interfaceDef)
+		builder.WriteString("\n")
+	}
+
+	return builder.String()
+}
+
+// collectTypeScriptInterfaces recursively collects all TypeScript interface definitions
+func (a *App) collectTypeScriptInterfaces(interfaceName string, obj interface{}, interfaces map[string]string) {
+	if _, exists := interfaces[interfaceName]; exists {
+		return
+	}
+
+	switch v := obj.(type) {
+	case map[string]interface{}:
+		var builder strings.Builder
+		builder.WriteString("export interface ")
+		builder.WriteString(interfaceName)
+		builder.WriteString(" {\n")
+
+		for key, value := range v {
+			fieldName := toCamelCase(key)
+			tsType := a.getTypeScriptType(value, interfaceName, fieldName)
+			builder.WriteString("    ")
+			builder.WriteString(fieldName)
+			builder.WriteString(": ")
+			builder.WriteString(tsType)
+			builder.WriteString(";\n")
+
+			if nestedMap, ok := value.(map[string]interface{}); ok {
+				nestedInterfaceName := strings.ToUpper(fieldName[:1]) + fieldName[1:]
+				a.collectTypeScriptInterfaces(nestedInterfaceName, nestedMap, interfaces)
+			} else if nestedArray, ok := value.([]interface{}); ok && len(nestedArray) > 0 {
+				if nestedMap, ok := nestedArray[0].(map[string]interface{}); ok {
+					nestedInterfaceName := strings.ToUpper(fieldName[:1]) + fieldName[1:]
+					a.collectTypeScriptInterfaces(nestedInterfaceName, nestedMap, interfaces)
+				}
+			}
+		}
+
+		builder.WriteString("}")
+		interfaces[interfaceName] = builder.String()
+
+	case []interface{}:
+		if len(v) > 0 {
+			a.collectTypeScriptInterfaces(interfaceName, v[0], interfaces)
+		}
+	}
+}
+
+// getTypeScriptType returns TypeScript type for a value
+func (a *App) getTypeScriptType(value interface{}, interfaceName string, fieldName string) string {
+	switch v := value.(type) {
+	case float64:
+		if v == float64(int64(v)) {
+			return "number"
+		}
+		return "number"
+	case bool:
+		return "boolean"
+	case string:
+		return "string"
+	case map[string]interface{}:
+		return strings.ToUpper(fieldName[:1]) + fieldName[1:]
+	case []interface{}:
+		if len(v) > 0 {
+			elemType := a.getTypeScriptType(v[0], interfaceName, fieldName)
+			return elemType + "[]"
+		}
+		return "any[]"
+	case nil:
+		return "any | null"
+	default:
+		return "any"
+	}
+}
+
+// ConvertToCSharpClass converts JSON to C# class
+func (a *App) ConvertToCSharpClass(input string, trimWhitespace bool, className string) JSONResponse {
+	var obj interface{}
+	err := json.Unmarshal([]byte(input), &obj)
+	if err != nil {
+		resp := a.ProcessJSON(input, "4", trimWhitespace)
+		if !resp.Success {
+			return resp
+		}
+		json.Unmarshal([]byte(resp.Data), &obj)
+	} else if trimWhitespace {
+		obj = a.trimStrings(obj)
+	}
+
+	if className == "" {
+		className = "RootClass"
+	}
+
+	csharpCode := a.generateCSharpClass(className, obj)
+	return JSONResponse{Success: true, Data: csharpCode}
+}
+
+// generateCSharpClass generates C# class code from interface{}
+func (a *App) generateCSharpClass(className string, obj interface{}) string {
+	var builder strings.Builder
+	classes := make(map[string]string)
+
+	a.collectCSharpClasses(className, obj, classes)
+
+	for _, classDef := range classes {
+		builder.WriteString(classDef)
+		builder.WriteString("\n")
+	}
+
+	return builder.String()
+}
+
+// collectCSharpClasses recursively collects all C# class definitions
+func (a *App) collectCSharpClasses(className string, obj interface{}, classes map[string]string) {
+	if _, exists := classes[className]; exists {
+		return
+	}
+
+	switch v := obj.(type) {
+	case map[string]interface{}:
+		var builder strings.Builder
+		builder.WriteString("public class ")
+		builder.WriteString(className)
+		builder.WriteString("\n{\n")
+
+		for key, value := range v {
+			fieldName := toPascalCase(key)
+			csharpType := a.getCSharpType(value, className, fieldName)
+			builder.WriteString("    public ")
+			builder.WriteString(csharpType)
+			builder.WriteString(" ")
+			builder.WriteString(fieldName)
+			builder.WriteString(" { get; set; }\n")
+
+			if nestedMap, ok := value.(map[string]interface{}); ok {
+				nestedClassName := fieldName
+				a.collectCSharpClasses(nestedClassName, nestedMap, classes)
+			} else if nestedArray, ok := value.([]interface{}); ok && len(nestedArray) > 0 {
+				if nestedMap, ok := nestedArray[0].(map[string]interface{}); ok {
+					nestedClassName := fieldName
+					a.collectCSharpClasses(nestedClassName, nestedMap, classes)
+				}
+			}
+		}
+
+		builder.WriteString("}")
+		classes[className] = builder.String()
+
+	case []interface{}:
+		if len(v) > 0 {
+			a.collectCSharpClasses(className, v[0], classes)
+		}
+	}
+}
+
+// getCSharpType returns C# type for a value
+func (a *App) getCSharpType(value interface{}, className string, fieldName string) string {
+	switch v := value.(type) {
+	case float64:
+		if v == float64(int64(v)) {
+			return "int"
+		}
+		return "double"
+	case bool:
+		return "bool"
+	case string:
+		return "string"
+	case map[string]interface{}:
+		return fieldName
+	case []interface{}:
+		if len(v) > 0 {
+			elemType := a.getCSharpType(v[0], className, fieldName)
+			return "List<" + elemType + ">"
+		}
+		return "List<object>"
+	case nil:
+		return "object"
+	default:
+		return "object"
+	}
+}
+
+// toCamelCase converts snake_case or kebab-case to camelCase
+func toCamelCase(s string) string {
+	s = strings.ReplaceAll(s, "_", " ")
+	s = strings.ReplaceAll(s, "-", " ")
+	words := strings.Fields(s)
+	if len(words) == 0 {
+		return s
+	}
+	result := words[0]
+	for i := 1; i < len(words); i++ {
+		if len(words[i]) > 0 {
+			result += strings.ToUpper(words[i][:1]) + words[i][1:]
+		}
+	}
+	return result
+}
+
+// toPascalCase converts snake_case or kebab-case to PascalCase
+func toPascalCase(s string) string {
+	s = strings.ReplaceAll(s, "_", " ")
+	s = strings.ReplaceAll(s, "-", " ")
+	words := strings.Fields(s)
+	if len(words) == 0 {
+		return s
+	}
+	var result string
+	for _, word := range words {
+		if len(word) > 0 {
+			result += strings.ToUpper(word[:1]) + word[1:]
+		}
+	}
+	return result
+}
+
+// ConvertToSQL converts JSON to SQL CREATE TABLE statement
+func (a *App) ConvertToSQL(input string, trimWhitespace bool, databaseType string, tableName string) JSONResponse {
+	var obj interface{}
+	err := json.Unmarshal([]byte(input), &obj)
+	if err != nil {
+		resp := a.ProcessJSON(input, "4", trimWhitespace)
+		if !resp.Success {
+			return resp
+		}
+		json.Unmarshal([]byte(resp.Data), &obj)
+	} else if trimWhitespace {
+		obj = a.trimStrings(obj)
+	}
+
+	if tableName == "" {
+		tableName = "table1"
+	}
+
+	sqlCode := a.generateSQL(obj, databaseType, tableName)
+	return JSONResponse{Success: true, Data: sqlCode}
+}
+
+// generateSQL generates SQL CREATE TABLE statement from interface{}
+func (a *App) generateSQL(obj interface{}, databaseType string, tableName string) string {
+	switch v := obj.(type) {
+	case map[string]interface{}:
+		return a.generateSQLFromMap(v, databaseType, tableName, make(map[string]bool))
+	case []interface{}:
+		if len(v) > 0 {
+			return a.generateSQL(v[0], databaseType, tableName)
+		}
+		return "-- No data to convert"
+	default:
+		return "-- Invalid JSON structure for SQL conversion"
+	}
+}
+
+// generateSQLFromMap generates SQL from map[string]interface{}
+func (a *App) generateSQLFromMap(data map[string]interface{}, databaseType string, tableName string, generatedTables map[string]bool) string {
+	var builder strings.Builder
+
+	builder.WriteString("-- ")
+	builder.WriteString(databaseType)
+	builder.WriteString(" CREATE TABLE statement\n")
+	builder.WriteString("CREATE TABLE ")
+	builder.WriteString(tableName)
+	builder.WriteString(" (\n")
+
+	var columns []string
+	for key, value := range data {
+		columnName := toSnakeCase(key)
+		columnType := a.getSQLType(value, databaseType)
+		columns = append(columns, "    "+columnName+" "+columnType)
+	}
+
+	builder.WriteString(strings.Join(columns, ",\n"))
+	builder.WriteString("\n)")
+
+	switch databaseType {
+	case "mysql":
+		builder.WriteString(" ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;")
+	case "postgresql":
+		builder.WriteString(";")
+	case "sqlite":
+		builder.WriteString(";")
+	case "sqlserver":
+		builder.WriteString(";")
+	case "oracle":
+		builder.WriteString(";")
+	default:
+		builder.WriteString(";")
+	}
+
+	builder.WriteString("\n\n")
+
+	generatedTables[tableName] = true
+
+	for key, value := range data {
+		if nestedMap, ok := value.(map[string]interface{}); ok {
+			nestedTableName := toSnakeCase(key)
+			if !generatedTables[nestedTableName] {
+				builder.WriteString(a.generateSQLFromMap(nestedMap, databaseType, nestedTableName, generatedTables))
+			}
+		} else if nestedArray, ok := value.([]interface{}); ok && len(nestedArray) > 0 {
+			if nestedMap, ok := nestedArray[0].(map[string]interface{}); ok {
+				nestedTableName := toSnakeCase(key)
+				if !generatedTables[nestedTableName] {
+					builder.WriteString(a.generateSQLFromMap(nestedMap, databaseType, nestedTableName, generatedTables))
+				}
+			}
+		}
+	}
+
+	return builder.String()
+}
+
+// getSQLType returns SQL type for a value based on database type
+func (a *App) getSQLType(value interface{}, databaseType string) string {
+	switch v := value.(type) {
+	case float64:
+		if v == float64(int64(v)) {
+			switch databaseType {
+			case "mysql":
+				return "BIGINT"
+			case "postgresql":
+				return "INT8"
+			case "sqlite":
+				return "INTEGER"
+			case "sqlserver":
+				return "BIGINT"
+			case "oracle":
+				return "NUMBER(19)"
+			default:
+				return "BIGINT"
+			}
+		}
+		switch databaseType {
+		case "mysql":
+			return "DECIMAL(20,10)"
+		case "postgresql":
+			return "NUMERIC(20,10)"
+		case "sqlite":
+			return "REAL"
+		case "sqlserver":
+			return "NUMERIC(20,10)"
+		case "oracle":
+			return "NUMBER(20,10)"
+		default:
+			return "DECIMAL(20,10)"
+		}
+	case bool:
+		switch databaseType {
+		case "mysql":
+			return "TINYINT(1)"
+		case "postgresql":
+			return "BOOLEAN"
+		case "sqlite":
+			return "INTEGER"
+		case "sqlserver":
+			return "BIT"
+		case "oracle":
+			return "NUMBER(1)"
+		default:
+			return "SMALLINT"
+		}
+	case string:
+		switch databaseType {
+		case "mysql":
+			return "VARCHAR(255)"
+		case "postgresql":
+			return "TEXT"
+		case "sqlite":
+			return "VARCHAR(255)"
+		case "sqlserver":
+			return "NVARCHAR(255)"
+		case "oracle":
+			return "VARCHAR2(255)"
+		default:
+			return "VARCHAR(255)"
+		}
+	case map[string]interface{}:
+		switch databaseType {
+		case "mysql":
+			return "JSON"
+		case "postgresql":
+			return "JSONB"
+		case "sqlite":
+			return "TEXT"
+		case "sqlserver":
+			return "NVARCHAR(MAX)"
+		case "oracle":
+			return "CLOB"
+		default:
+			return "TEXT"
+		}
+	case []interface{}:
+		switch databaseType {
+		case "mysql":
+			return "JSON"
+		case "postgresql":
+			return "JSONB"
+		case "sqlite":
+			return "TEXT"
+		case "sqlserver":
+			return "NVARCHAR(MAX)"
+		case "oracle":
+			return "CLOB"
+		default:
+			return "TEXT"
+		}
+	case nil:
+		switch databaseType {
+		case "mysql":
+			return "VARCHAR(255)"
+		case "postgresql":
+			return "TEXT"
+		case "sqlite":
+			return "VARCHAR(255)"
+		case "sqlserver":
+			return "NVARCHAR(255)"
+		case "oracle":
+			return "VARCHAR2(255)"
+		default:
+			return "VARCHAR(255)"
+		}
+	default:
+		return "TEXT"
+	}
+}
+
 // GetPathByOffset returns the JSON path for a given character offset
 func (a *App) GetPathByOffset(input string, offset int) string {
 	if input == "" {

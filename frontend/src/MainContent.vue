@@ -224,12 +224,52 @@
       </div>
       <div class="flex-1"></div>
       <div class="flex flex-col items-end gap-0.5" style="padding-right: 10px;">
-       
         <div class="cursor-pointer hover:text-blue-500 transition-colors text-xs" @click="handleOpenLink('https://github.com/zzguang83325/json_formatter_fixer')">
           https://github.com/zzguang83325/json_formatter_fixer
         </div>
       </div>
     </footer>
+
+    <!-- 代码预览对话框 -->
+    <n-modal v-model:show="showCodeModal" preset="card" :style="{ width: '800px' }" :title="codeModalTitle">
+      <template #header-extra>
+        <n-button size="small" type="primary" @click="handleCopyCode">
+          <template #icon><n-icon><copy-icon /></n-icon></template>
+          复制
+        </n-button>
+      </template>
+      <div v-if="exportType === 'sql'" class="database-select-container" :class="{ 'dark': store.isDarkMode }">
+        <span class="input-label">数据库:</span>
+        <n-select 
+          v-model:value="selectedDatabase" 
+          :options="databaseOptions" 
+          size="small" 
+          style="width: 200px"
+          @update:value="handleDatabaseChange"
+        />
+      </div>
+      <div v-if="exportType === 'sql'" class="table-name-input-container" :class="{ 'dark': store.isDarkMode }">
+        <span class="input-label">表名:</span>
+        <n-input 
+          v-model:value="sqlTableName" 
+          size="small" 
+          style="width: 200px"
+          @update:value="handleTableNameChange"
+        />
+      </div>
+      <div v-if="exportType !== 'yaml' && exportType !== 'sql'" class="class-name-input-container" :class="{ 'dark': store.isDarkMode }">
+        <span class="input-label">{{ getClassNameLabel() }}</span>
+        <n-input 
+          v-model:value="codeClassName" 
+          size="small" 
+          style="width: 200px"
+          @update:value="handleClassNameChange"
+        />
+      </div>
+      <div class="code-preview-container">
+        <pre class="code-preview" :class="store.isDarkMode ? 'code-dark' : 'code-light'">{{ codeModalContent }}</pre>
+      </div>
+    </n-modal>
   </div>
 </template>
 
@@ -244,6 +284,7 @@ import {
   AddOutline as AddIcon, 
   CloseOutline as CloseIcon,
   ClipboardOutline as ClipboardIcon,
+  CopyOutline as CopyIcon,
   LockClosedOutline as LockIcon,
   LockOpenOutline as UnlockIcon,
   FileTrayOutline as FileIcon,
@@ -255,7 +296,9 @@ import MonacoEditor from './components/MonacoEditor.vue'
 import TreeView from './components/TreeView.vue'
 import { 
   FormatJSON, MinifyJSON, ProcessJSON, 
-  ConvertToYAML, GetPathOffset, GetPathByOffset 
+  ConvertToYAML, ConvertToJavaClass, ConvertToGoStruct,
+  ConvertToPythonClass, ConvertToTypeScriptInterface, ConvertToCSharpClass, ConvertToSQL,
+  GetPathOffset, GetPathByOffset 
 } from '../wailsjs/go/main/App'
 import { BrowserOpenURL } from '../wailsjs/runtime/runtime'
 
@@ -265,6 +308,16 @@ const dialog = useDialog()
 
 const editorRef = ref<any>(null)
 const treeRef = ref<any>(null)
+
+// 代码预览对话框相关
+const showCodeModal = ref(false)
+const codeModalTitle = ref('')
+const codeModalContent = ref('')
+const exportType = ref('')
+const codeClassName = ref('')
+const sqlTableName = ref('table1')
+const originalJsonContent = ref('')
+const selectedDatabase = ref('mysql')
 
 // 标签右键菜单相关
 const showTabContextMenu = ref(false)
@@ -358,8 +411,13 @@ const indentOptions = [
 ]
 
 const exportOptions = [
-  { label: 'JSON 文件', key: 'json' },
-  { label: 'YAML 文件', key: 'yaml' }
+  { label: 'YAML', key: 'yaml' },
+  { label: 'Java Class', key: 'java' },
+  { label: 'Go Struct', key: 'go' },
+  { label: 'Python Class', key: 'python' },
+  { label: 'TypeScript Interface', key: 'typescript' },
+  { label: 'C# Class', key: 'csharp' },
+  { label: 'SQL', key: 'sql' }
 ]
 
 const themeOptions = [
@@ -374,6 +432,14 @@ const themeSelectOptions = [
   { label: '复古黄', value: 'yellow' },
   { label: '清新绿', value: 'green' },
   { label: '天空蓝', value: 'blue' }
+]
+
+const databaseOptions = [
+  { label: 'MySQL', value: 'mysql' },
+  { label: 'PostgreSQL', value: 'postgresql' },
+  { label: 'SQLite', value: 'sqlite' },
+  { label: 'SQL Server', value: 'sqlserver' },
+  { label: 'Oracle', value: 'oracle' }
 ]
 
 const themeClasses = computed(() => {
@@ -618,33 +684,282 @@ async function handleExport(key: string) {
   try {
     const trimWhitespace = store.activeTab.formatOptions.trimWhitespace || false
     if (key === 'yaml') {
+      exportType.value = 'yaml'
+      originalJsonContent.value = content
       const res = await ConvertToYAML(content, trimWhitespace)
       if (res.success) {
-        content = res.data
-        if (!filename.toLowerCase().endsWith('.yaml')) {
-          filename = filename.replace(/\.[^/.]+$/, "") + ".yaml"
-        }
+        codeModalTitle.value = 'YAML'
+        codeModalContent.value = res.data
+        showCodeModal.value = true
       } else {
         throw new Error(res.error)
       }
-    } else {
-      // 默认 JSON 导出
-      if (!filename.toLowerCase().endsWith('.json')) {
-        // 如果没有后缀或者后缀不是 .json，则添加/替换为 .json
-        filename = filename.replace(/\.[^/.]+$/, "") + ".json"
+    } else if (key === 'java') {
+      exportType.value = 'java'
+      originalJsonContent.value = content
+      const res = await ConvertToJavaClass(content, trimWhitespace, '')
+      if (res.success) {
+        codeModalTitle.value = 'Java Class'
+        codeModalContent.value = res.data
+        codeClassName.value = 'RootClass'
+        showCodeModal.value = true
+      } else {
+        throw new Error(res.error)
+      }
+    } else if (key === 'go') {
+      exportType.value = 'go'
+      originalJsonContent.value = content
+      const res = await ConvertToGoStruct(content, trimWhitespace, '')
+      if (res.success) {
+        codeModalTitle.value = 'Go Struct'
+        codeModalContent.value = res.data
+        codeClassName.value = 'RootStruct'
+        showCodeModal.value = true
+      } else {
+        throw new Error(res.error)
+      }
+    } else if (key === 'python') {
+      exportType.value = 'python'
+      originalJsonContent.value = content
+      const res = await ConvertToPythonClass(content, trimWhitespace, '')
+      if (res.success) {
+        codeModalTitle.value = 'Python Class'
+        codeModalContent.value = res.data
+        codeClassName.value = 'RootClass'
+        showCodeModal.value = true
+      } else {
+        throw new Error(res.error)
+      }
+    } else if (key === 'typescript') {
+      exportType.value = 'typescript'
+      originalJsonContent.value = content
+      const res = await ConvertToTypeScriptInterface(content, trimWhitespace, '')
+      if (res.success) {
+        codeModalTitle.value = 'TypeScript Interface'
+        codeModalContent.value = res.data
+        codeClassName.value = 'RootInterface'
+        showCodeModal.value = true
+      } else {
+        throw new Error(res.error)
+      }
+    } else if (key === 'csharp') {
+      exportType.value = 'csharp'
+      originalJsonContent.value = content
+      const res = await ConvertToCSharpClass(content, trimWhitespace, '')
+      if (res.success) {
+        codeModalTitle.value = 'C# Class'
+        codeModalContent.value = res.data
+        codeClassName.value = 'RootClass'
+        showCodeModal.value = true
+      } else {
+        throw new Error(res.error)
+      }
+    } else if (key === 'sql') {
+      exportType.value = 'sql'
+      originalJsonContent.value = content
+      selectedDatabase.value = 'mysql'
+      sqlTableName.value = 'table1'
+      const res = await ConvertToSQL(content, trimWhitespace, 'mysql', 'table1')
+      if (res.success) {
+        codeModalTitle.value = 'SQL'
+        codeModalContent.value = res.data
+        showCodeModal.value = true
+      } else {
+        throw new Error(res.error)
       }
     }
-    
-    const blob = new Blob([content], { type: key === 'yaml' ? 'text/yaml' : 'application/json' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = filename
-    a.click()
-    URL.revokeObjectURL(url)
-    message.success('导出成功')
   } catch (e: any) {
     message.error('导出失败: ' + (e.message || '未知错误'))
   }
 }
+
+async function handleCopyCode() {
+  try {
+    await navigator.clipboard.writeText(codeModalContent.value)
+    message.success('复制成功')
+  } catch (e: any) {
+    message.error('复制失败: ' + (e.message || '未知错误'))
+  }
+}
+
+async function handleClassNameChange(newName: string) {
+  if (!newName || newName.trim() === '' || exportType.value === 'yaml') {
+    return
+  }
+  
+  try {
+    const trimWhitespace = store.activeTab?.formatOptions.trimWhitespace || false
+    
+    if (exportType.value === 'java') {
+      const res = await ConvertToJavaClass(originalJsonContent.value, trimWhitespace, newName)
+      if (res.success) {
+        codeModalContent.value = res.data
+      }
+    } else if (exportType.value === 'go') {
+      const res = await ConvertToGoStruct(originalJsonContent.value, trimWhitespace, newName)
+      if (res.success) {
+        codeModalContent.value = res.data
+      }
+    } else if (exportType.value === 'python') {
+      const res = await ConvertToPythonClass(originalJsonContent.value, trimWhitespace, newName)
+      if (res.success) {
+        codeModalContent.value = res.data
+      }
+    } else if (exportType.value === 'typescript') {
+      const res = await ConvertToTypeScriptInterface(originalJsonContent.value, trimWhitespace, newName)
+      if (res.success) {
+        codeModalContent.value = res.data
+      }
+    } else if (exportType.value === 'csharp') {
+      const res = await ConvertToCSharpClass(originalJsonContent.value, trimWhitespace, newName)
+      if (res.success) {
+        codeModalContent.value = res.data
+      }
+    }
+  } catch (e: any) {
+    message.error('生成失败: ' + (e.message || '未知错误'))
+  }
+}
+
+async function handleDatabaseChange(database: string) {
+  if (!database || exportType.value !== 'sql') {
+    return
+  }
+  
+  try {
+    const trimWhitespace = store.activeTab?.formatOptions.trimWhitespace || false
+    const res = await ConvertToSQL(originalJsonContent.value, trimWhitespace, database, sqlTableName.value)
+    if (res.success) {
+      codeModalContent.value = res.data
+    }
+  } catch (e: any) {
+    message.error('生成失败: ' + (e.message || '未知错误'))
+  }
+}
+
+async function handleTableNameChange(tableName: string) {
+  if (!tableName || exportType.value !== 'sql') {
+    return
+  }
+  
+  try {
+    const trimWhitespace = store.activeTab?.formatOptions.trimWhitespace || false
+    const res = await ConvertToSQL(originalJsonContent.value, trimWhitespace, selectedDatabase.value, tableName)
+    if (res.success) {
+      codeModalContent.value = res.data
+    }
+  } catch (e: any) {
+    message.error('生成失败: ' + (e.message || '未知错误'))
+  }
+}
+
+function getClassNameLabel() {
+  switch (exportType.value) {
+    case 'java': return '类名:'
+    case 'go': return '结构体名:'
+    case 'python': return '类名:'
+    case 'typescript': return '接口名:'
+    case 'csharp': return '类名:'
+    default: return '名称:'
+  }
+}
 </script>
+
+<style scoped>
+.code-preview-container {
+  max-height: 500px;
+  overflow-y: auto;
+}
+
+.code-preview {
+  margin: 0;
+  padding: 16px;
+  border-radius: 6px;
+  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+.code-light {
+  background-color: #f8f9fa;
+  color: #212529;
+  border: 1px solid #dee2e6;
+}
+
+.code-dark {
+  background-color: #1e1e1e;
+  color: #d4d4d4;
+  border: 1px solid #3c3c3c;
+}
+
+.class-name-input-container {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid #e0e0e0;
+}
+
+.class-name-input-container.dark {
+  border-bottom-color: #3c3c3c;
+}
+
+.class-name-input-container .input-label {
+  font-size: 14px;
+  font-weight: 500;
+  color: #333;
+}
+
+.class-name-input-container.dark .input-label {
+  color: #d4d4d4;
+}
+
+.database-select-container {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid #e0e0e0;
+}
+
+.database-select-container.dark {
+  border-bottom-color: #3c3c3c;
+}
+
+.database-select-container .input-label {
+  font-size: 14px;
+  font-weight: 500;
+  color: #333;
+}
+
+.database-select-container.dark .input-label {
+  color: #d4d4d4;
+}
+
+.table-name-input-container {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid #e0e0e0;
+}
+
+.table-name-input-container.dark {
+  border-bottom-color: #3c3c3c;
+}
+
+.table-name-input-container .input-label {
+  font-size: 14px;
+  font-weight: 500;
+  color: #333;
+}
+
+.table-name-input-container.dark .input-label {
+  color: #d4d4d4;
+}
+</style>
