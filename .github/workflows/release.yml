@@ -16,13 +16,16 @@ jobs:
         include:
           - os: windows-latest
             platform: windows/amd64
-            artifact: Json-Formatter-Fixer.exe
+            artifact_name: windows-amd64
+            file: Json-Formatter-Fixer.exe.zip
           - os: macos-latest
             platform: darwin/universal
-            artifact: Json-Formatter-Fixer.app
+            artifact_name: darwin-universal
+            file: Json-Formatter-Fixer.app.zip
           - os: ubuntu-22.04
             platform: linux/amd64
-            artifact: Json-Formatter-Fixer
+            artifact_name: linux-amd64
+            file: Json-Formatter-Fixer-linux.tar.gz
 
     runs-on: ${{ matrix.os }}
 
@@ -57,42 +60,57 @@ jobs:
           else
             wails build -platform ${{ matrix.platform }} -clean
           fi
-          ls -R build/bin
         shell: bash
 
       - name: Package Windows
         if: matrix.os == 'windows-latest'
         run: |
-          powershell Compress-Archive -Path build/bin/* -DestinationPath ${{ matrix.artifact }}.zip
+          powershell Compress-Archive -Path build/bin/* -DestinationPath Json-Formatter-Fixer.exe.zip
 
       - name: Package macOS
         if: matrix.os == 'macos-latest'
         run: |
-          # macOS .app is a directory, need to zip it
           cd build/bin
-          # 查找任何以 .app 结尾的目录并压缩
           APP_NAME=$(find . -name "*.app" -type d -maxdepth 1)
           if [ -n "$APP_NAME" ]; then
-            zip -r ../../${{ matrix.artifact }}.zip "$APP_NAME"
+            zip -r ../../Json-Formatter-Fixer.app.zip "$APP_NAME"
           else
             echo "Error: .app bundle not found"
-            ls -la
             exit 1
           fi
 
       - name: Package Linux
         if: matrix.os == 'ubuntu-22.04'
         run: |
-          tar -czvf ${{ matrix.artifact }}-linux.tar.gz -C build/bin .
+          tar -czvf Json-Formatter-Fixer-linux.tar.gz -C build/bin .
 
-      - name: Upload Artifacts
-        uses: softprops/action-gh-release@v2
-        if: startsWith(github.ref, 'refs/tags/')
+      - name: Upload temporary artifact
+        uses: actions/upload-artifact@v4
         with:
-          files: |
-            *.zip
-            *.tar.gz
-          fail_on_unmatched_files: false
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.file }}
+          retention-days: 1
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -R artifacts
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          fail_on_unmatched_files: true
           generate_release_notes: true
+          overwrite_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
