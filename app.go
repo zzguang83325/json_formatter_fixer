@@ -1,12 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
 
 	"github.com/tidwall/gjson"
+	"github.com/tidwall/pretty"
 	"gopkg.in/yaml.v3"
 )
 
@@ -35,7 +37,7 @@ type JSONResponse struct {
 }
 
 // ProcessJSON handles the flow: Validate -> Repair (if needed) -> Format
-func (a *App) ProcessJSON(input string, indent string, trimWhitespace bool) JSONResponse {
+func (a *App) ProcessJSON(input string, indent string, trimWhitespace bool, keepOrder bool) JSONResponse {
 	if input == "" {
 		return JSONResponse{Success: true, Data: "", Repaired: false}
 	}
@@ -65,25 +67,58 @@ func (a *App) ProcessJSON(input string, indent string, trimWhitespace bool) JSON
 		repaired = true
 	}
 
-	// 3. Always Format the result
-	var obj interface{}
-	if err := json.Unmarshal([]byte(finalJSON), &obj); err != nil {
-		return JSONResponse{Success: false, Error: "解析错误: " + err.Error()}
-	}
-
-	// 4. If trimWhitespace is requested, trim all strings in the object
-	if trimWhitespace {
-		obj = a.trimStrings(obj)
-	}
-
+	// 3. Format the result
 	var formatted []byte
 	var err error
-	if indent == "tab" {
-		formatted, err = json.MarshalIndent(obj, "", "\t")
-	} else if indent == "2" {
-		formatted, err = json.MarshalIndent(obj, "", "  ")
+
+	if trimWhitespace && keepOrder {
+		// Special case: both enabled. Use gjson to traverse and reconstruct while trimming
+		// to preserve original key order.
+		trimmedCompact := a.reconstructAndTrim(gjson.Parse(finalJSON))
+		finalJSON = trimmedCompact
+	}
+
+	if !keepOrder {
+		// If we don't need to keep order, standard json package sorts keys alphabetically
+		var obj interface{}
+		if err := json.Unmarshal([]byte(finalJSON), &obj); err != nil {
+			return JSONResponse{Success: false, Error: "解析错误: " + err.Error()}
+		}
+
+		if trimWhitespace {
+			obj = a.trimStrings(obj)
+		}
+
+		if indent == "tab" {
+			formatted, err = json.MarshalIndent(obj, "", "\t")
+		} else if indent == "2" {
+			formatted, err = json.MarshalIndent(obj, "", "  ")
+		} else {
+			formatted, err = json.MarshalIndent(obj, "", "    ")
+		}
 	} else {
-		formatted, err = json.MarshalIndent(obj, "", "    ")
+		// We want to keep order. If trimWhitespace was handled above, finalJSON is already trimmed.
+		var indentStr string
+		if indent == "tab" {
+			indentStr = "\t"
+		} else if indent == "2" {
+			indentStr = "  "
+		} else {
+			indentStr = "    "
+		}
+
+		var buf bytes.Buffer
+		err = json.Indent(&buf, []byte(finalJSON), "", indentStr)
+		if err != nil {
+			// Fallback to pretty.Pretty if json.Indent fails
+			formatted = pretty.PrettyOptions([]byte(finalJSON), &pretty.Options{
+				Indent:   indentStr,
+				SortKeys: false, // Maintain original order
+			})
+			err = nil
+		} else {
+			formatted = buf.Bytes()
+		}
 	}
 
 	if err != nil {
@@ -121,65 +156,123 @@ func (a *App) trimStrings(i interface{}) interface{} {
 	}
 }
 
+// reconstructAndTrim recursively traverses a gjson.Result and reconstructs the JSON string
+// while trimming strings and preserving original key order.
+func (a *App) reconstructAndTrim(res gjson.Result) string {
+	if res.IsArray() {
+		var sb strings.Builder
+		sb.WriteString("[")
+		first := true
+		res.ForEach(func(key, value gjson.Result) bool {
+			if !first {
+				sb.WriteString(",")
+			}
+			sb.WriteString(a.reconstructAndTrim(value))
+			first = false
+			return true
+		})
+		sb.WriteString("]")
+		return sb.String()
+	}
+	if res.IsObject() {
+		var sb strings.Builder
+		sb.WriteString("{")
+		first := true
+		res.ForEach(func(key, value gjson.Result) bool {
+			if !first {
+				sb.WriteString(",")
+			}
+			// Trim key
+			trimmedKey := strings.Trim(key.String(), " \n\t\r\f\b")
+			sb.WriteString(fmt.Sprintf("%q:", trimmedKey))
+			sb.WriteString(a.reconstructAndTrim(value))
+			first = false
+			return true
+		})
+		sb.WriteString("}")
+		return sb.String()
+	}
+	if res.Type == gjson.String {
+		return fmt.Sprintf("%q", strings.Trim(res.String(), " \n\t\r\f\b"))
+	}
+	// For other types (Number, True, False, Null), use Raw
+	return res.Raw
+}
+
 // FormatJSON beautifies the JSON string
-func (a *App) FormatJSON(input string, indent string, trimWhitespace bool) JSONResponse {
-	var obj interface{}
-	err := json.Unmarshal([]byte(input), &obj)
-	if err != nil {
-		// Try to process first if it's invalid
-		resp := a.ProcessJSON(input, indent, trimWhitespace)
-		if !resp.Success {
-			return resp
-		}
-		json.Unmarshal([]byte(resp.Data), &obj)
-	} else if trimWhitespace {
-		obj = a.trimStrings(obj)
+func (a *App) FormatJSON(input string, indent string, trimWhitespace bool, keepOrder bool) JSONResponse {
+	// If it's invalid or we need to trim whitespace or sort keys, use ProcessJSON which handles these cases
+	if !gjson.Valid(input) || trimWhitespace || !keepOrder {
+		return a.ProcessJSON(input, indent, trimWhitespace, keepOrder)
 	}
 
-	var formatted []byte
+	// For valid JSON without trimming and keeping order, use json.Indent to preserve order
+	var indentStr string
 	if indent == "tab" {
-		formatted, err = json.MarshalIndent(obj, "", "\t")
+		indentStr = "\t"
 	} else if indent == "2" {
-		formatted, err = json.MarshalIndent(obj, "", "  ")
+		indentStr = "  "
 	} else {
-		formatted, err = json.MarshalIndent(obj, "", "    ")
+		indentStr = "    "
 	}
 
+	var buf bytes.Buffer
+	err := json.Indent(&buf, []byte(input), "", indentStr)
 	if err != nil {
 		return JSONResponse{Success: false, Error: err.Error()}
 	}
 
-	return JSONResponse{Success: true, Data: string(formatted)}
+	return JSONResponse{Success: true, Data: buf.String()}
 }
 
 // MinifyJSON removes all whitespace
-func (a *App) MinifyJSON(input string, trimWhitespace bool) JSONResponse {
-	var obj interface{}
-	err := json.Unmarshal([]byte(input), &obj)
-	if err != nil {
-		resp := a.ProcessJSON(input, "4", trimWhitespace)
+func (a *App) MinifyJSON(input string, trimWhitespace bool, keepOrder bool) JSONResponse {
+	finalJSON := input
+	if !gjson.Valid(input) {
+		resp := a.ProcessJSON(input, "0", trimWhitespace, keepOrder)
 		if !resp.Success {
 			return resp
 		}
-		json.Unmarshal([]byte(resp.Data), &obj)
-	} else if trimWhitespace {
-		obj = a.trimStrings(obj)
+		finalJSON = resp.Data
 	}
 
-	minified, err := json.Marshal(obj)
+	if trimWhitespace && keepOrder {
+		// Use reconstructAndTrim to preserve order while trimming
+		finalJSON = a.reconstructAndTrim(gjson.Parse(finalJSON))
+	}
+
+	if !keepOrder {
+		var obj interface{}
+		if err := json.Unmarshal([]byte(finalJSON), &obj); err != nil {
+			return JSONResponse{Success: false, Error: err.Error()}
+		}
+
+		if trimWhitespace {
+			obj = a.trimStrings(obj)
+		}
+
+		minified, err := json.Marshal(obj)
+		if err != nil {
+			return JSONResponse{Success: false, Error: err.Error()}
+		}
+		return JSONResponse{Success: true, Data: string(minified)}
+	}
+
+	var buf bytes.Buffer
+	err := json.Compact(&buf, []byte(finalJSON))
 	if err != nil {
 		return JSONResponse{Success: false, Error: err.Error()}
 	}
 
-	return JSONResponse{Success: true, Data: string(minified)}
+	return JSONResponse{Success: true, Data: buf.String()}
 }
 
 // ConvertToYAML converts JSON to YAML
-func (a *App) ConvertToYAML(input string, trimWhitespace bool) JSONResponse {
+func (a *App) ConvertToYAML(input string, trimWhitespace bool, keepOrder bool) JSONResponse {
 	var obj interface{}
 	err := json.Unmarshal([]byte(input), &obj)
 	if err != nil {
-		resp := a.ProcessJSON(input, "4", trimWhitespace)
+		resp := a.ProcessJSON(input, "4", trimWhitespace, keepOrder)
 		if !resp.Success {
 			return resp
 		}
@@ -197,11 +290,11 @@ func (a *App) ConvertToYAML(input string, trimWhitespace bool) JSONResponse {
 }
 
 // ConvertToJavaClass converts JSON to Java class
-func (a *App) ConvertToJavaClass(input string, trimWhitespace bool, className string) JSONResponse {
+func (a *App) ConvertToJavaClass(input string, trimWhitespace bool, keepOrder bool, className string) JSONResponse {
 	var obj interface{}
 	err := json.Unmarshal([]byte(input), &obj)
 	if err != nil {
-		resp := a.ProcessJSON(input, "4", trimWhitespace)
+		resp := a.ProcessJSON(input, "4", trimWhitespace, keepOrder)
 		if !resp.Success {
 			return resp
 		}
@@ -335,11 +428,11 @@ func (a *App) getJavaType(value interface{}, className string, fieldName string)
 }
 
 // ConvertToGoStruct converts JSON to Go struct
-func (a *App) ConvertToGoStruct(input string, trimWhitespace bool, structName string) JSONResponse {
+func (a *App) ConvertToGoStruct(input string, trimWhitespace bool, keepOrder bool, structName string) JSONResponse {
 	var obj interface{}
 	err := json.Unmarshal([]byte(input), &obj)
 	if err != nil {
-		resp := a.ProcessJSON(input, "4", trimWhitespace)
+		resp := a.ProcessJSON(input, "4", trimWhitespace, keepOrder)
 		if !resp.Success {
 			return resp
 		}
@@ -444,11 +537,11 @@ func (a *App) getGoType(value interface{}, structName string, fieldName string) 
 }
 
 // ConvertToPythonClass converts JSON to Python class
-func (a *App) ConvertToPythonClass(input string, trimWhitespace bool, className string) JSONResponse {
+func (a *App) ConvertToPythonClass(input string, trimWhitespace bool, keepOrder bool, className string) JSONResponse {
 	var obj interface{}
 	err := json.Unmarshal([]byte(input), &obj)
 	if err != nil {
-		resp := a.ProcessJSON(input, "4", trimWhitespace)
+		resp := a.ProcessJSON(input, "4", trimWhitespace, keepOrder)
 		if !resp.Success {
 			return resp
 		}
@@ -562,11 +655,11 @@ func toSnakeCase(s string) string {
 }
 
 // ConvertToTypeScriptInterface converts JSON to TypeScript interface
-func (a *App) ConvertToTypeScriptInterface(input string, trimWhitespace bool, interfaceName string) JSONResponse {
+func (a *App) ConvertToTypeScriptInterface(input string, trimWhitespace bool, keepOrder bool, interfaceName string) JSONResponse {
 	var obj interface{}
 	err := json.Unmarshal([]byte(input), &obj)
 	if err != nil {
-		resp := a.ProcessJSON(input, "4", trimWhitespace)
+		resp := a.ProcessJSON(input, "4", trimWhitespace, keepOrder)
 		if !resp.Success {
 			return resp
 		}
@@ -669,11 +762,11 @@ func (a *App) getTypeScriptType(value interface{}, interfaceName string, fieldNa
 }
 
 // ConvertToCSharpClass converts JSON to C# class
-func (a *App) ConvertToCSharpClass(input string, trimWhitespace bool, className string) JSONResponse {
+func (a *App) ConvertToCSharpClass(input string, trimWhitespace bool, keepOrder bool, className string) JSONResponse {
 	var obj interface{}
 	err := json.Unmarshal([]byte(input), &obj)
 	if err != nil {
-		resp := a.ProcessJSON(input, "4", trimWhitespace)
+		resp := a.ProcessJSON(input, "4", trimWhitespace, keepOrder)
 		if !resp.Success {
 			return resp
 		}
@@ -810,11 +903,11 @@ func toPascalCase(s string) string {
 }
 
 // ConvertToSQL converts JSON to SQL CREATE TABLE statement
-func (a *App) ConvertToSQL(input string, trimWhitespace bool, databaseType string, tableName string) JSONResponse {
+func (a *App) ConvertToSQL(input string, trimWhitespace bool, keepOrder bool, databaseType string, tableName string) JSONResponse {
 	var obj interface{}
 	err := json.Unmarshal([]byte(input), &obj)
 	if err != nil {
-		resp := a.ProcessJSON(input, "4", trimWhitespace)
+		resp := a.ProcessJSON(input, "4", trimWhitespace, keepOrder)
 		if !resp.Success {
 			return resp
 		}

@@ -11,6 +11,7 @@ export interface Tab {
     indent: '2' | '4' | 'tab'
     quotes: 'double' | 'single'
     trimWhitespace: boolean
+    keepOrder: boolean
   }
 }
 
@@ -71,7 +72,8 @@ export const useAppStore = defineStore('app', () => {
       formatOptions: {
         indent: '4',
         quotes: 'double',
-        trimWhitespace: true
+        trimWhitespace: true,
+        keepOrder: true
       }
     }
     tabs.value.push(newTab)

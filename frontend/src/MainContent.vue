@@ -68,11 +68,30 @@
                   v-if="store.activeTab"
                   v-model:value="store.activeTab.formatOptions.trimWhitespace"
                   size="small"
-                  @update:value="handleFormat"
+                  @update:value="store.saveToStorage()"
                 />
               </div>
             </template>
             去除字符串两边不可见符号 (换行、空格等)
+          </n-tooltip>
+        </div>
+
+        <n-divider vertical class="h-5" />
+
+        <div class="flex items-center gap-2 shrink-0">
+          <n-tooltip trigger="hover">
+            <template #trigger>
+              <div class="flex items-center gap-1">
+                <span class="text-xs text-gray-400">保持原序:</span>
+                <n-switch
+                  v-if="store.activeTab"
+                  v-model:value="store.activeTab.formatOptions.keepOrder"
+                  size="small"
+                  @update:value="store.saveToStorage()"
+                />
+              </div>
+            </template>
+            开启时保持 Key 的原始顺序，关闭时按字母顺序排列
           </n-tooltip>
         </div>
         <n-divider vertical class="h-5" />
@@ -162,8 +181,8 @@
       />
     </header>
 
-    <!-- 中部工作区 (85%) -->
-    <main class="h-[85%] flex overflow-hidden" :style="{ backgroundColor: currentBgColor }">
+    <!-- 主体编辑区 -->
+    <main class="flex-1 min-h-0 flex overflow-hidden" :style="{ backgroundColor: currentBgColor }">
       <n-split direction="horizontal" :default-size="0.5" :min="0.1" :max="0.9" class="w-full">
         <template #1>
           <!-- 左侧编辑区 -->
@@ -208,24 +227,24 @@
       </n-split>
     </main>
 
-    <!-- 底部状态区 (5%) -->
+    <!-- 底部状态区 (22px) -->
     <footer 
-      class="h-[5%] flex items-center px-4 text-xs gap-4"
+      class="h-[22px] flex items-center px-4 text-[10px] gap-4 shrink-0"
       :style="{ backgroundColor: currentBgColor }"
-      :class="store.isDarkMode ? 'text-gray-400 border-t border-gray-800' : 'text-gray-500 border-t border-gray-200'"
+      :class="store.isDarkMode ? 'text-gray-500 border-t border-gray-800' : 'text-gray-400 border-t border-gray-200'"
     >
-      <div v-if="store.activeTab" class="flex items-center gap-4">
+      <div v-if="store.activeTab" class="flex items-center gap-3">
         <span>字符数: {{ store.activeTab.content.length }}</span>
         <span>大小: {{ (store.activeTab.content.length / 1024).toFixed(2) }} KB</span>
-        <n-divider vertical />
-        <span>缩进: {{ store.activeTab.formatOptions.indent }} 空格</span>
-        <n-divider vertical />
+        <n-divider vertical class="h-2.5" />
+        <span>缩进: {{ store.activeTab.formatOptions.indent }}</span>
+        <n-divider vertical class="h-2.5" />
         <span>编码: UTF-8</span>
       </div>
       <div class="flex-1"></div>
-      <div class="flex flex-col items-end gap-0.5" style="padding-right: 10px;">
-        <div class="cursor-pointer hover:text-blue-500 transition-colors text-xs" @click="handleOpenLink('https://github.com/zzguang83325/json_formatter_fixer')">
-          https://github.com/zzguang83325/json_formatter_fixer
+      <div class="flex items-center" style="padding-right: 4px;">
+        <div class="cursor-pointer hover:text-blue-500 transition-colors opacity-70 hover:opacity-100" @click="handleOpenLink('https://github.com/zzguang83325/json_formatter_fixer')">
+          GitHub
         </div>
       </div>
     </footer>
@@ -554,7 +573,8 @@ async function handleMinify() {
   if (!store.activeTab) return
   try {
     const trimWhitespace = store.activeTab.formatOptions.trimWhitespace || false
-    const res = await MinifyJSON(store.activeTab.content, trimWhitespace)
+    const keepOrder = store.activeTab.formatOptions.keepOrder ?? true
+    const res = await MinifyJSON(store.activeTab.content, trimWhitespace, keepOrder)
     if (res.success) {
       store.updateTabContent(store.activeTabId!, res.data)
       message.success('压缩成功')
@@ -581,7 +601,8 @@ async function autoProcessContent(content: string, tabName?: string) {
   try {
     const indent = store.activeTab?.formatOptions.indent || '4'
     const trimWhitespace = store.activeTab?.formatOptions.trimWhitespace || false
-    const res = await ProcessJSON(content, indent, trimWhitespace)
+    const keepOrder = store.activeTab?.formatOptions.keepOrder ?? true
+    const res = await ProcessJSON(content, indent, trimWhitespace, keepOrder)
     if (res.success) {
       if (tabName) {
         store.createTab(tabName, res.data)
@@ -683,10 +704,11 @@ async function handleExport(key: string) {
   
   try {
     const trimWhitespace = store.activeTab.formatOptions.trimWhitespace || false
+    const keepOrder = store.activeTab.formatOptions.keepOrder ?? true
     if (key === 'yaml') {
       exportType.value = 'yaml'
       originalJsonContent.value = content
-      const res = await ConvertToYAML(content, trimWhitespace)
+      const res = await ConvertToYAML(content, trimWhitespace, keepOrder)
       if (res.success) {
         codeModalTitle.value = 'YAML'
         codeModalContent.value = res.data
@@ -697,7 +719,7 @@ async function handleExport(key: string) {
     } else if (key === 'java') {
       exportType.value = 'java'
       originalJsonContent.value = content
-      const res = await ConvertToJavaClass(content, trimWhitespace, '')
+      const res = await ConvertToJavaClass(content, trimWhitespace, keepOrder, '')
       if (res.success) {
         codeModalTitle.value = 'Java Class'
         codeModalContent.value = res.data
@@ -709,7 +731,7 @@ async function handleExport(key: string) {
     } else if (key === 'go') {
       exportType.value = 'go'
       originalJsonContent.value = content
-      const res = await ConvertToGoStruct(content, trimWhitespace, '')
+      const res = await ConvertToGoStruct(content, trimWhitespace, keepOrder, '')
       if (res.success) {
         codeModalTitle.value = 'Go Struct'
         codeModalContent.value = res.data
@@ -721,7 +743,7 @@ async function handleExport(key: string) {
     } else if (key === 'python') {
       exportType.value = 'python'
       originalJsonContent.value = content
-      const res = await ConvertToPythonClass(content, trimWhitespace, '')
+      const res = await ConvertToPythonClass(content, trimWhitespace, keepOrder, '')
       if (res.success) {
         codeModalTitle.value = 'Python Class'
         codeModalContent.value = res.data
@@ -733,7 +755,7 @@ async function handleExport(key: string) {
     } else if (key === 'typescript') {
       exportType.value = 'typescript'
       originalJsonContent.value = content
-      const res = await ConvertToTypeScriptInterface(content, trimWhitespace, '')
+      const res = await ConvertToTypeScriptInterface(content, trimWhitespace, keepOrder, '')
       if (res.success) {
         codeModalTitle.value = 'TypeScript Interface'
         codeModalContent.value = res.data
@@ -745,7 +767,7 @@ async function handleExport(key: string) {
     } else if (key === 'csharp') {
       exportType.value = 'csharp'
       originalJsonContent.value = content
-      const res = await ConvertToCSharpClass(content, trimWhitespace, '')
+      const res = await ConvertToCSharpClass(content, trimWhitespace, keepOrder, '')
       if (res.success) {
         codeModalTitle.value = 'C# Class'
         codeModalContent.value = res.data
@@ -759,7 +781,7 @@ async function handleExport(key: string) {
       originalJsonContent.value = content
       selectedDatabase.value = 'mysql'
       sqlTableName.value = 'table1'
-      const res = await ConvertToSQL(content, trimWhitespace, 'mysql', 'table1')
+      const res = await ConvertToSQL(content, trimWhitespace, keepOrder, 'mysql', 'table1')
       if (res.success) {
         codeModalTitle.value = 'SQL'
         codeModalContent.value = res.data
@@ -789,29 +811,30 @@ async function handleClassNameChange(newName: string) {
   
   try {
     const trimWhitespace = store.activeTab?.formatOptions.trimWhitespace || false
+    const keepOrder = store.activeTab?.formatOptions.keepOrder ?? true
     
     if (exportType.value === 'java') {
-      const res = await ConvertToJavaClass(originalJsonContent.value, trimWhitespace, newName)
+      const res = await ConvertToJavaClass(originalJsonContent.value, trimWhitespace, keepOrder, newName)
       if (res.success) {
         codeModalContent.value = res.data
       }
     } else if (exportType.value === 'go') {
-      const res = await ConvertToGoStruct(originalJsonContent.value, trimWhitespace, newName)
+      const res = await ConvertToGoStruct(originalJsonContent.value, trimWhitespace, keepOrder, newName)
       if (res.success) {
         codeModalContent.value = res.data
       }
     } else if (exportType.value === 'python') {
-      const res = await ConvertToPythonClass(originalJsonContent.value, trimWhitespace, newName)
+      const res = await ConvertToPythonClass(originalJsonContent.value, trimWhitespace, keepOrder, newName)
       if (res.success) {
         codeModalContent.value = res.data
       }
     } else if (exportType.value === 'typescript') {
-      const res = await ConvertToTypeScriptInterface(originalJsonContent.value, trimWhitespace, newName)
+      const res = await ConvertToTypeScriptInterface(originalJsonContent.value, trimWhitespace, keepOrder, newName)
       if (res.success) {
         codeModalContent.value = res.data
       }
     } else if (exportType.value === 'csharp') {
-      const res = await ConvertToCSharpClass(originalJsonContent.value, trimWhitespace, newName)
+      const res = await ConvertToCSharpClass(originalJsonContent.value, trimWhitespace, keepOrder, newName)
       if (res.success) {
         codeModalContent.value = res.data
       }
@@ -828,7 +851,8 @@ async function handleDatabaseChange(database: string) {
   
   try {
     const trimWhitespace = store.activeTab?.formatOptions.trimWhitespace || false
-    const res = await ConvertToSQL(originalJsonContent.value, trimWhitespace, database, sqlTableName.value)
+    const keepOrder = store.activeTab?.formatOptions.keepOrder ?? true
+    const res = await ConvertToSQL(originalJsonContent.value, trimWhitespace, keepOrder, database, sqlTableName.value)
     if (res.success) {
       codeModalContent.value = res.data
     }
@@ -844,7 +868,8 @@ async function handleTableNameChange(tableName: string) {
   
   try {
     const trimWhitespace = store.activeTab?.formatOptions.trimWhitespace || false
-    const res = await ConvertToSQL(originalJsonContent.value, trimWhitespace, selectedDatabase.value, tableName)
+    const keepOrder = store.activeTab?.formatOptions.keepOrder ?? true
+    const res = await ConvertToSQL(originalJsonContent.value, trimWhitespace, keepOrder, selectedDatabase.value, tableName)
     if (res.success) {
       codeModalContent.value = res.data
     }
