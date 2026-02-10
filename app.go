@@ -6,17 +6,20 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/pretty"
-	"github.com/wailsapp/wails/v2/pkg/runtime"
+	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 	"gopkg.in/yaml.v3"
 )
 
 // App struct
 type App struct {
-	ctx context.Context
+	ctx          context.Context
+	lastSavePath string
 }
 
 // NewApp creates a new App application struct
@@ -28,6 +31,49 @@ func NewApp() *App {
 // so we can call the runtime methods
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+}
+
+// getDesktopPath returns the path to the user's desktop
+func (a *App) getDesktopPath() string {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+
+	var desktopPath string
+	if runtime.GOOS == "windows" {
+		// 1. Try common OneDrive locations
+		oneDrivePath := os.Getenv("OneDrive")
+		if oneDrivePath != "" {
+			oneDriveDesktop := filepath.Join(oneDrivePath, "Desktop")
+			if _, err := os.Stat(oneDriveDesktop); err == nil {
+				return oneDriveDesktop
+			}
+		}
+
+		// 2. Try another OneDrive environment variable
+		oneDriveCommercial := os.Getenv("OneDriveCommercial")
+		if oneDriveCommercial != "" {
+			oneDriveDesktop := filepath.Join(oneDriveCommercial, "Desktop")
+			if _, err := os.Stat(oneDriveDesktop); err == nil {
+				return oneDriveDesktop
+			}
+		}
+
+		// 3. Try standard OneDrive path under home dir
+		standardOneDriveDesktop := filepath.Join(homeDir, "OneDrive", "Desktop")
+		if _, err := os.Stat(standardOneDriveDesktop); err == nil {
+			return standardOneDriveDesktop
+		}
+
+		// 4. Fallback to standard desktop
+		desktopPath = filepath.Join(homeDir, "Desktop")
+	} else {
+		// macOS and Linux
+		desktopPath = filepath.Join(homeDir, "Desktop")
+	}
+
+	return desktopPath
 }
 
 // JSONResponse represents a standard response for JSON operations
@@ -1273,12 +1319,19 @@ func (a *App) SaveFile(content string, defaultFilename string) JSONResponse {
 	var targetPath string
 	var err error
 
+	// Determine default directory: use last save path if available, otherwise use desktop
+	defaultDir := a.lastSavePath
+	if defaultDir == "" {
+		defaultDir = a.getDesktopPath()
+	}
+
 	if defaultFilename == "" {
-		// Open save dialog
-		targetPath, err = runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
-			DefaultFilename: "data.json",
-			Title:           "保存 JSON 文件",
-			Filters: []runtime.FileFilter{
+		// Open save dialog with default directory
+		targetPath, err = wailsruntime.SaveFileDialog(a.ctx, wailsruntime.SaveDialogOptions{
+			DefaultFilename:  "data.json",
+			DefaultDirectory: defaultDir,
+			Title:            "保存 JSON 文件",
+			Filters: []wailsruntime.FileFilter{
 				{DisplayName: "JSON Files (*.json)", Pattern: "*.json"},
 				{DisplayName: "All Files (*.*)", Pattern: "*.*"},
 			},
@@ -1294,10 +1347,11 @@ func (a *App) SaveFile(content string, defaultFilename string) JSONResponse {
 		if strings.Contains(defaultFilename, string(os.PathSeparator)) || strings.Contains(defaultFilename, "/") {
 			targetPath = defaultFilename
 		} else {
-			targetPath, err = runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
-				DefaultFilename: defaultFilename,
-				Title:           "保存文件",
-				Filters: []runtime.FileFilter{
+			targetPath, err = wailsruntime.SaveFileDialog(a.ctx, wailsruntime.SaveDialogOptions{
+				DefaultFilename:  defaultFilename,
+				DefaultDirectory: defaultDir,
+				Title:            "保存文件",
+				Filters: []wailsruntime.FileFilter{
 					{DisplayName: "JSON Files (*.json)", Pattern: "*.json"},
 					{DisplayName: "All Files (*.*)", Pattern: "*.*"},
 				},
@@ -1316,6 +1370,9 @@ func (a *App) SaveFile(content string, defaultFilename string) JSONResponse {
 	if err != nil {
 		return JSONResponse{Success: false, Error: "写入文件失败: " + err.Error()}
 	}
+
+	// Remember the directory for next time
+	a.lastSavePath = filepath.Dir(targetPath)
 
 	return JSONResponse{Success: true, Data: targetPath}
 }
