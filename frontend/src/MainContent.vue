@@ -4,7 +4,7 @@
     :class="themeClasses"
     :style="{ backgroundColor: currentBgColor }"
     @contextmenu.prevent
-    @dragover.prevent
+    @dragover.prevent="handleDragOver"
     @drop.prevent="handleGlobalDrop"
   >
     <!-- 顶部控制区 -->
@@ -32,6 +32,13 @@
         <n-button size="small" type="success" secondary @click="handleImportClipboard">
           <template #icon><clipboard-icon /></template>
           粘贴导入
+        </n-button>
+
+        <n-divider vertical class="h-5" />
+
+        <n-button size="small" type="primary" secondary @click="handleSaveFile">
+          <template #icon><n-icon><save-icon /></n-icon></template>
+          保存
         </n-button>
 
         <n-divider vertical class="h-5" />
@@ -308,7 +315,8 @@ import {
   LockOpenOutline as UnlockIcon,
   FileTrayOutline as FileIcon,
   HelpCircleOutline as HelpIcon,
-  DownloadOutline as DownloadIcon
+  DownloadOutline as DownloadIcon,
+  SaveOutline as SaveIcon
 } from '@vicons/ionicons5'
 import { useAppStore } from './store/app'
 import MonacoEditor from './components/MonacoEditor.vue'
@@ -317,9 +325,10 @@ import {
   FormatJSON, MinifyJSON, ProcessJSON, 
   ConvertToYAML, ConvertToJavaClass, ConvertToGoStruct,
   ConvertToPythonClass, ConvertToTypeScriptInterface, ConvertToCSharpClass, ConvertToSQL,
-  GetPathOffset, GetPathByOffset 
+  GetPathOffset, GetPathByOffset,
+  SaveFile, WriteFileDirect, ReadFile
 } from '../wailsjs/go/main/App'
-import { BrowserOpenURL } from '../wailsjs/runtime/runtime'
+import { BrowserOpenURL, OnFileDrop } from '../wailsjs/runtime/runtime'
 
 const store = useAppStore()
 const message = useMessage()
@@ -430,6 +439,8 @@ const indentOptions = [
 ]
 
 const exportOptions = [
+  { label: '复制到剪切板', key: 'clipboard' },
+  { type: 'divider', key: 'd1' },
   { label: 'YAML', key: 'yaml' },
   { label: 'Java Class', key: 'java' },
   { label: 'Go Struct', key: 'go' },
@@ -521,6 +532,11 @@ function handleKeyDown(e: KeyboardEvent) {
     e.preventDefault()
     createNewTab()
   }
+  // Ctrl + S: 保存文件
+  if (e.ctrlKey && e.key.toLowerCase() === 's') {
+    e.preventDefault()
+    handleSaveFile()
+  }
 }
 
 onMounted(() => {
@@ -583,6 +599,42 @@ async function handleMinify() {
     }
   } catch (e: any) {
     message.error('压缩失败: ' + (e.message || '未知错误'))
+  }
+}
+
+async function handleSaveFile() {
+  if (!store.activeTab) return
+  try {
+    let res;
+    // 强制检查 filePath 是否有效
+    const currentPath = store.activeTab.filePath
+    console.log('Current tab path:', currentPath)
+    
+    if (currentPath && currentPath.trim() !== '') {
+      // 如果已经有文件路径（如拖拽进来的），直接写入
+      res = await WriteFileDirect(store.activeTab.content, currentPath)
+    } else {
+      // 否则弹出对话框选择保存位置
+      res = await SaveFile(store.activeTab.content, store.activeTab.name)
+    }
+
+    if (res.success) {
+      const fullPath = res.data
+      const fileName = fullPath.split(/[\\/]/).pop() || 'Untitled'
+      
+      store.activeTab.name = fileName
+      store.activeTab.filePath = fullPath
+      store.activeTab.isDirty = false
+      store.saveToStorage()
+      
+      message.success('保存成功: ' + fullPath)
+    } else {
+      if (res.error !== '用户取消保存') {
+        message.error('保存失败: ' + res.error)
+      }
+    }
+  } catch (e: any) {
+    message.error('保存失败: ' + (e.message || '未知错误'))
   }
 }
 
@@ -680,6 +732,12 @@ function handleFileUpload(data: { file: { file: File | null } }) {
   return false
 }
 
+function handleDragOver(e: DragEvent) {
+  if (e.dataTransfer) {
+    e.dataTransfer.dropEffect = 'copy'
+  }
+}
+
 function handleGlobalDrop(e: DragEvent) {
   const files = e.dataTransfer?.files
   if (!files || files.length === 0) return
@@ -690,7 +748,9 @@ function handleGlobalDrop(e: DragEvent) {
       const reader = new FileReader()
       reader.onload = async (event) => {
         const content = event.target?.result as string
+        // Web 端的 File 对象无法获取系统路径，但可以保持文件名
         store.createTab(file.name, content)
+        message.success(`已加载文件: ${file.name}`)
       }
       reader.readAsText(file)
     }
@@ -705,6 +765,13 @@ async function handleExport(key: string) {
   try {
     const trimWhitespace = store.activeTab.formatOptions.trimWhitespace || false
     const keepOrder = store.activeTab.formatOptions.keepOrder ?? true
+    
+    if (key === 'clipboard') {
+      await navigator.clipboard.writeText(content)
+      message.success('已复制到剪切板')
+      return
+    }
+
     if (key === 'yaml') {
       exportType.value = 'yaml'
       originalJsonContent.value = content

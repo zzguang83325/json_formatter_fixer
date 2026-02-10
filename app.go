@@ -5,10 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/pretty"
+	"github.com/wailsapp/wails/v2/pkg/runtime"
 	"gopkg.in/yaml.v3"
 )
 
@@ -1264,4 +1266,84 @@ func (a *App) GetPathOffset(input string, path string) PathInfo {
 	}
 
 	return PathInfo{Offset: -1, Length: 0}
+}
+
+// SaveFile saves content to a file, opening a dialog if filename is empty
+func (a *App) SaveFile(content string, defaultFilename string) JSONResponse {
+	var targetPath string
+	var err error
+
+	if defaultFilename == "" {
+		// Open save dialog
+		targetPath, err = runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
+			DefaultFilename: "data.json",
+			Title:           "保存 JSON 文件",
+			Filters: []runtime.FileFilter{
+				{DisplayName: "JSON Files (*.json)", Pattern: "*.json"},
+				{DisplayName: "All Files (*.*)", Pattern: "*.*"},
+			},
+		})
+		if err != nil {
+			return JSONResponse{Success: false, Error: "打开保存对话框失败: " + err.Error()}
+		}
+		if targetPath == "" {
+			return JSONResponse{Success: false, Error: "用户取消保存"}
+		}
+	} else {
+		// Use provided filename (if it's a full path, use it; otherwise open dialog with it)
+		if strings.Contains(defaultFilename, string(os.PathSeparator)) || strings.Contains(defaultFilename, "/") {
+			targetPath = defaultFilename
+		} else {
+			targetPath, err = runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
+				DefaultFilename: defaultFilename,
+				Title:           "保存文件",
+				Filters: []runtime.FileFilter{
+					{DisplayName: "JSON Files (*.json)", Pattern: "*.json"},
+					{DisplayName: "All Files (*.*)", Pattern: "*.*"},
+				},
+			})
+			if err != nil {
+				return JSONResponse{Success: false, Error: "打开保存对话框失败: " + err.Error()}
+			}
+			if targetPath == "" {
+				return JSONResponse{Success: false, Error: "用户取消保存"}
+			}
+		}
+	}
+
+	// Write to file
+	err = os.WriteFile(targetPath, []byte(content), 0644)
+	if err != nil {
+		return JSONResponse{Success: false, Error: "写入文件失败: " + err.Error()}
+	}
+
+	return JSONResponse{Success: true, Data: targetPath}
+}
+
+// WriteFileDirect writes content directly to a specified path without opening a dialog
+func (a *App) WriteFileDirect(content string, filePath string) JSONResponse {
+	if filePath == "" {
+		return JSONResponse{Success: false, Error: "文件路径不能为空"}
+	}
+
+	err := os.WriteFile(filePath, []byte(content), 0644)
+	if err != nil {
+		return JSONResponse{Success: false, Error: "写入文件失败: " + err.Error()}
+	}
+
+	return JSONResponse{Success: true, Data: filePath}
+}
+
+// ReadFile reads content from a specified path
+func (a *App) ReadFile(filePath string) JSONResponse {
+	if filePath == "" {
+		return JSONResponse{Success: false, Error: "文件路径不能为空"}
+	}
+
+	content, err := os.ReadFile(filePath)
+	if err != nil {
+		return JSONResponse{Success: false, Error: "读取文件失败: " + err.Error()}
+	}
+
+	return JSONResponse{Success: true, Data: string(content)}
 }

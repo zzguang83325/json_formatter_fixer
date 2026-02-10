@@ -25,3 +25,9 @@ export function GetPathOffset(arg1:string,arg2:string):Promise<main.PathInfo>;
 export function MinifyJSON(arg1:string,arg2:boolean,arg3:boolean):Promise<main.JSONResponse>;
 
 export function ProcessJSON(arg1:string,arg2:string,arg3:boolean,arg4:boolean):Promise<main.JSONResponse>;
+
+export function ReadFile(arg1:string):Promise<main.JSONResponse>;
+
+export function SaveFile(arg1:string,arg2:string):Promise<main.JSONResponse>;
+
+export function WriteFileDirect(arg1:string,arg2:string):Promise<main.JSONResponse>;

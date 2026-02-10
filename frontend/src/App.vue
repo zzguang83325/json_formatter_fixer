@@ -31,4 +31,7 @@ const theme = computed(() => store.isDarkMode ? darkTheme : null)
   -ms-overflow-style: none;
   scrollbar-width: none;
 }
+.wails-drop-target {
+  --wails-drop-target: drop;
+}
 </style>

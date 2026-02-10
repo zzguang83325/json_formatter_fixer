@@ -5,6 +5,7 @@ export interface Tab {
   id: string
   name: string
   content: string
+  filePath?: string
   isDirty: boolean
   isPinned: boolean
   formatOptions: {
@@ -61,12 +62,13 @@ export const useAppStore = defineStore('app', () => {
     }
   }
 
-  function createTab(name = 'New Tab', content = '') {
+  function createTab(name = 'New Tab', content = '', filePath?: string) {
     const id = crypto.randomUUID()
     const newTab: Tab = {
       id,
       name,
       content,
+      filePath,
       isDirty: false,
       isPinned: false,
       formatOptions: {
