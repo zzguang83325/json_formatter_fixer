@@ -17,12 +17,28 @@
       >
         <div class="flex items-center gap-2">
           <n-button size="small" type="primary" secondary @click="handleFormat">
-            <template #icon><n-icon><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><path d="M432 32H80a64 64 0 00-64 64v320a64 64 0 0064 64h352a64 64 0 0064-64V96a64 64 0 00-64-64zM96 384H64v-32h32zm0-64H64v-32h32zm0-64H64v-32h32zm0-64H64V96h32zm224 192H128v-32h192zm96 0h-64v-32h64zm0-64H128v-32h288zm0-64H128v-32h288zm0-64H128V96h288z" fill="currentColor"/></svg></n-icon></template>
+            <template #icon>
+              <n-icon>
+                <svg viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M160 160c-25 0-35 15-35 45v20c0 20-20 25-30 25 10 0 30 5 30 25v20c0 30 10 45 35 45M352 160c25 0 35 15 35 45v20c0 20 20 25 30 25-10 0-30 5-30 25v20c0 30-10 45-35 45" fill="none" stroke="currentColor" stroke-width="32" stroke-linecap="round"/>
+                  <circle cx="256" cy="200" r="16" fill="currentColor"/>
+                  <circle cx="256" cy="256" r="16" fill="currentColor"/>
+                  <circle cx="256" cy="312" r="16" fill="currentColor"/>
+                </svg>
+              </n-icon>
+            </template>
             格式化
           </n-button>
           <n-divider vertical class="h-5" />
           <n-button size="small" type="info" secondary @click="handleMinify">
-            <template #icon><n-icon><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><path d="M432 32H80a64 64 0 00-64 64v320a64 64 0 0064 64h352a64 64 0 0064-64V96a64 64 0 00-64-64zM96 384H64v-32h32zm0-64H64v-32h32zm0-64H64v-32h32zm0-64H64V96h32zm224 192H128v-32h192zm96 0h-64v-32h64zm0-64H128v-32h288zm0-64H128v-32h288zm0-64H128V96h288z" fill="currentColor"/></svg></n-icon></template>
+            <template #icon>
+              <n-icon>
+                <svg viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M160 160c-25 0-35 15-35 45v20c0 20-20 25-30 25 10 0 30 5 30 25v20c0 30 10 45 35 45M352 160c25 0 35 15 35 45v20c0 20 20 25 30 25-10 0-30 5-30 25v20c0 30-10 45-35 45" fill="none" stroke="currentColor" stroke-width="24" stroke-linecap="round" opacity="0.6"/>
+                  <rect x="200" y="230" width="112" height="52" rx="8" fill="currentColor"/>
+                </svg>
+              </n-icon>
+            </template>
             压缩
           </n-button>
         </div>
@@ -103,7 +119,6 @@
         </div>
         <n-divider vertical class="h-5" />
         <div class="flex-1"></div>
-        <n-divider vertical class="h-5" />
         <div class="flex items-center gap-2 shrink-0">
           <span class="text-xs text-gray-400 whitespace-nowrap">主题:</span>
           <n-select 
@@ -249,7 +264,26 @@
         <span>编码: UTF-8</span>
       </div>
       <div class="flex-1"></div>
-      <div class="flex items-center" style="padding-right: 4px;">
+      <div class="flex items-center gap-3">
+        <template v-if="isWindows">
+          <n-tooltip trigger="hover">
+            <template #trigger>
+              <n-button 
+                text 
+                size="tiny" 
+                type="info" 
+                @click="handleRegisterAsDefault" 
+                class="opacity-70 hover:opacity-100 transition-opacity"
+              >
+                <template #icon>
+                  <n-icon><settings-icon /></n-icon>
+                </template>
+              </n-button>
+            </template>
+            设为默认 JSON 编辑器
+          </n-tooltip>
+          <n-divider vertical class="h-2.5 mx-0" />
+        </template>
         <div class="cursor-pointer hover:text-blue-500 transition-colors opacity-70 hover:opacity-100" @click="handleOpenLink('https://github.com/zzguang83325/json_formatter_fixer')">
           GitHub
         </div>
@@ -316,7 +350,8 @@ import {
   FileTrayOutline as FileIcon,
   HelpCircleOutline as HelpIcon,
   DownloadOutline as DownloadIcon,
-  SaveOutline as SaveIcon
+  SaveOutline as SaveIcon,
+  SettingsOutline as SettingsIcon
 } from '@vicons/ionicons5'
 import { useAppStore } from './store/app'
 import MonacoEditor from './components/MonacoEditor.vue'
@@ -326,9 +361,9 @@ import {
   ConvertToYAML, ConvertToJavaClass, ConvertToGoStruct,
   ConvertToPythonClass, ConvertToTypeScriptInterface, ConvertToCSharpClass, ConvertToSQL,
   GetPathOffset, GetPathByOffset,
-  SaveFile, WriteFileDirect, ReadFile
+  SaveFile, WriteFileDirect, ReadFile, RegisterAsDefaultEditor
 } from '../wailsjs/go/main/App'
-import { BrowserOpenURL, OnFileDrop } from '../wailsjs/runtime/runtime'
+import { BrowserOpenURL, OnFileDrop, EventsOn } from '../wailsjs/runtime/runtime'
 
 const store = useAppStore()
 const message = useMessage()
@@ -336,6 +371,7 @@ const dialog = useDialog()
 
 const editorRef = ref<any>(null)
 const treeRef = ref<any>(null)
+const isWindows = ref(/window/i.test(navigator.userAgent))
 
 // 代码预览对话框相关
 const showCodeModal = ref(false)
@@ -548,6 +584,19 @@ onMounted(() => {
     document.documentElement.classList.remove('dark')
   }
   window.addEventListener('keydown', handleKeyDown)
+  
+  // 监听后端发送的打开文件事件（双击文件启动或外部调用）
+  EventsOn('open-file', (data: any) => {
+    if (data && data.path) {
+      // 检查是否已经打开了同一个路径
+      const existingTab = store.tabs.find(t => t.filePath === data.path)
+      if (existingTab) {
+        store.activeTabId = existingTab.id
+      } else {
+        store.createTab(data.name, data.content, data.path)
+      }
+    }
+  })
 })
 
 onBeforeUnmount(() => {
@@ -634,8 +683,29 @@ async function handleSaveFile() {
       }
     }
   } catch (e: any) {
-    message.error('保存失败: ' + (e.message || '未知错误'))
+    message.error('导出失败: ' + (e.message || '未知错误'))
   }
+}
+
+async function handleRegisterAsDefault() {
+  dialog.warning({
+    title: '确认设置',
+    content: '是否将此程序设为默认 JSON 编辑器？这将会修改系统注册表关联。',
+    positiveText: '确认',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      try {
+        const res = await RegisterAsDefaultEditor()
+        if (res.success) {
+          message.success(res.data)
+        } else {
+          message.error('设置失败: ' + res.error)
+        }
+      } catch (e: any) {
+        message.error('设置失败: ' + (e.message || '未知错误'))
+      }
+    }
+  })
 }
 
 function handleOpenLink(url: string) {

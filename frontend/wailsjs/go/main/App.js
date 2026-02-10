@@ -54,6 +54,10 @@ export function ReadFile(arg1) {
   return window['go']['main']['App']['ReadFile'](arg1);
 }
 
+export function RegisterAsDefaultEditor() {
+  return window['go']['main']['App']['RegisterAsDefaultEditor']();
+}
+
 export function SaveFile(arg1, arg2) {
   return window['go']['main']['App']['SaveFile'](arg1, arg2);
 }

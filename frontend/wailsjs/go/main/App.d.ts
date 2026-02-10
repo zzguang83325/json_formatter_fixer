@@ -28,6 +28,8 @@ export function ProcessJSON(arg1:string,arg2:string,arg3:boolean,arg4:boolean):P
 
 export function ReadFile(arg1:string):Promise<main.JSONResponse>;
 
+export function RegisterAsDefaultEditor():Promise<main.JSONResponse>;
+
 export function SaveFile(arg1:string,arg2:string):Promise<main.JSONResponse>;
 
 export function WriteFileDirect(arg1:string,arg2:string):Promise<main.JSONResponse>;

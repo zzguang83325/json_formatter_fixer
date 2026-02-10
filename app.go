@@ -5,10 +5,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
+	"time"
 
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/pretty"
@@ -31,6 +35,61 @@ func NewApp() *App {
 // so we can call the runtime methods
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+
+	// Check if the app was started with a file path as an argument
+	if len(os.Args) > 1 {
+		filePath := os.Args[1]
+		a.openFile(filePath)
+	}
+
+	// Start a local server to listen for file open requests from other instances
+	go a.startSingleInstanceServer()
+}
+
+// openFile reads a file and emits an event to the frontend
+func (a *App) openFile(filePath string) {
+	if _, err := os.Stat(filePath); err == nil {
+		content, err := os.ReadFile(filePath)
+		if err == nil {
+			go func() {
+				// Wait for frontend to be ready
+				time.Sleep(1000 * time.Millisecond)
+				wailsruntime.EventsEmit(a.ctx, "open-file", map[string]string{
+					"path":    filePath,
+					"name":    filepath.Base(filePath),
+					"content": string(content),
+				})
+			}()
+		}
+	}
+}
+
+// startSingleInstanceServer listens on a local port for other instances
+func (a *App) startSingleInstanceServer() {
+	l, err := net.Listen("tcp", "127.0.0.1:52109")
+	if err != nil {
+		// Port already in use, this should not happen as we handle it in main.go
+		return
+	}
+	defer l.Close()
+
+	for {
+		conn, err := l.Accept()
+		if err != nil {
+			continue
+		}
+		go func(c net.Conn) {
+			defer c.Close()
+			buf := make([]byte, 1024)
+			n, err := c.Read(buf)
+			if err == nil && n > 0 {
+				filePath := string(buf[:n])
+				a.openFile(filePath)
+				// Bring window to front
+				wailsruntime.WindowShow(a.ctx)
+			}
+		}(conn)
+	}
 }
 
 // getDesktopPath returns the path to the user's desktop
@@ -1403,4 +1462,42 @@ func (a *App) ReadFile(filePath string) JSONResponse {
 	}
 
 	return JSONResponse{Success: true, Data: string(content)}
+}
+
+// RegisterAsDefaultEditor registers the current executable as the default editor for .json files on Windows
+func (a *App) RegisterAsDefaultEditor() JSONResponse {
+	if runtime.GOOS != "windows" {
+		return JSONResponse{Success: false, Error: "该功能仅支持 Windows 系统"}
+	}
+
+	exePath, err := os.Executable()
+	if err != nil {
+		return JSONResponse{Success: false, Error: "获取程序路径失败: " + err.Error()}
+	}
+
+	progID := "JSONFormatterFixer.JSON"
+	description := "JSON Formatter Fixer Document"
+
+	// 1. Create ProgID and set open command
+	// reg add "HKCU\Software\Classes\JSONFormatterFixer.JSON" /ve /t REG_SZ /d "JSON Formatter Fixer Document" /f
+	commands := [][]string{
+		{"reg", "add", "HKCU\\Software\\Classes\\" + progID, "/ve", "/t", "REG_SZ", "/d", description, "/f"},
+		{"reg", "add", "HKCU\\Software\\Classes\\" + progID + "\\shell\\open\\command", "/ve", "/t", "REG_SZ", "/d", fmt.Sprintf("\"%s\" \"%%1\"", exePath), "/f"},
+		{"reg", "add", "HKCU\\Software\\Classes\\" + progID + "\\DefaultIcon", "/ve", "/t", "REG_SZ", "/d", fmt.Sprintf("\"%s\",0", exePath), "/f"},
+		// 2. Associate .json extension with the ProgID
+		{"reg", "add", "HKCU\\Software\\Classes\\.json", "/ve", "/t", "REG_SZ", "/d", progID, "/f"},
+	}
+
+	for _, cmdArgs := range commands {
+		cmd := exec.Command(cmdArgs[0], cmdArgs[1:]...)
+		// 隐藏控制台窗口
+		if runtime.GOOS == "windows" {
+			cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+		}
+		if err := cmd.Run(); err != nil {
+			return JSONResponse{Success: false, Error: fmt.Sprintf("执行注册表修改失败 (%v): %v", cmdArgs, err)}
+		}
+	}
+
+	return JSONResponse{Success: true, Data: "成功设为默认 JSON 编辑器"}
 }
