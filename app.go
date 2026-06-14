@@ -11,9 +11,11 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
+	"github.com/fsnotify/fsnotify"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/pretty"
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
@@ -24,11 +26,16 @@ import (
 type App struct {
 	ctx          context.Context
 	lastSavePath string
+	watcher      *fsnotify.Watcher
+	watcherMu    sync.Mutex
+	watchedFiles map[string]bool
 }
 
 // NewApp creates a new App application struct
 func NewApp() *App {
-	return &App{}
+	return &App{
+		watchedFiles: make(map[string]bool),
+	}
 }
 
 // startup is called when the app starts. The context is saved
@@ -1500,4 +1507,144 @@ func (a *App) RegisterAsDefaultEditor() JSONResponse {
 	}
 
 	return JSONResponse{Success: true, Data: "成功设为默认 JSON 编辑器"}
+}
+
+// initWatcher initializes the file watcher if not already initialized
+func (a *App) initWatcher() error {
+	a.watcherMu.Lock()
+	defer a.watcherMu.Unlock()
+
+	if a.watcher != nil {
+		return nil
+	}
+
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		return err
+	}
+
+	a.watcher = watcher
+
+	// Start the watcher loop in a goroutine
+	go a.watcherLoop()
+
+	return nil
+}
+
+// watcherLoop runs the file watcher event loop
+func (a *App) watcherLoop() {
+	for {
+		select {
+		case event, ok := <-a.watcher.Events:
+			if !ok {
+				return
+			}
+
+			// Only handle write events (file modification)
+			if event.Has(fsnotify.Write) {
+				// Read the file content
+				content, err := os.ReadFile(event.Name)
+				if err != nil {
+					continue
+				}
+
+				// Emit event to frontend
+				wailsruntime.EventsEmit(a.ctx, "file-changed", map[string]string{
+					"path":    event.Name,
+					"content": string(content),
+				})
+			}
+		case err, ok := <-a.watcher.Errors:
+			if !ok {
+				return
+			}
+			// Log error but continue watching
+			fmt.Printf("Watcher error: %v\n", err)
+		}
+	}
+}
+
+// WatchFile starts watching a file for changes
+func (a *App) WatchFile(filePath string) JSONResponse {
+	if filePath == "" {
+		return JSONResponse{Success: false, Error: "文件路径不能为空"}
+	}
+
+	// Resolve the absolute path
+	absPath, err := filepath.Abs(filePath)
+	if err != nil {
+		return JSONResponse{Success: false, Error: "无法获取文件绝对路径: " + err.Error()}
+	}
+
+	// Check if file exists
+	if _, err := os.Stat(absPath); os.IsNotExist(err) {
+		return JSONResponse{Success: false, Error: "文件不存在"}
+	}
+
+	// Initialize watcher if needed
+	if err := a.initWatcher(); err != nil {
+		return JSONResponse{Success: false, Error: "无法初始化文件监听: " + err.Error()}
+	}
+
+	a.watcherMu.Lock()
+	defer a.watcherMu.Unlock()
+
+	// Check if already watching
+	if a.watchedFiles[absPath] {
+		return JSONResponse{Success: true, Data: "文件已在监听中"}
+	}
+
+	// Watch the directory containing the file
+	dir := filepath.Dir(absPath)
+	if err := a.watcher.Add(dir); err != nil {
+		return JSONResponse{Success: false, Error: "无法添加监听: " + err.Error()}
+	}
+
+	a.watchedFiles[absPath] = true
+	return JSONResponse{Success: true, Data: "开始监听文件: " + absPath}
+}
+
+// UnwatchFile stops watching a file
+func (a *App) UnwatchFile(filePath string) JSONResponse {
+	if filePath == "" {
+		return JSONResponse{Success: false, Error: "文件路径不能为空"}
+	}
+
+	// Resolve the absolute path
+	absPath, err := filepath.Abs(filePath)
+	if err != nil {
+		return JSONResponse{Success: false, Error: "无法获取文件绝对路径: " + err.Error()}
+	}
+
+	a.watcherMu.Lock()
+	defer a.watcherMu.Unlock()
+
+	if !a.watchedFiles[absPath] {
+		return JSONResponse{Success: true, Data: "文件未在监听中"}
+	}
+
+	delete(a.watchedFiles, absPath)
+
+	// If no more files are being watched, close the watcher to save resources
+	if len(a.watchedFiles) == 0 && a.watcher != nil {
+		a.watcher.Close()
+		a.watcher = nil
+	}
+
+	return JSONResponse{Success: true, Data: "停止监听文件: " + absPath}
+}
+
+// UnwatchAllFiles stops watching all files
+func (a *App) UnwatchAllFiles() JSONResponse {
+	a.watcherMu.Lock()
+	defer a.watcherMu.Unlock()
+
+	if a.watcher != nil {
+		a.watcher.Close()
+		a.watcher = nil
+	}
+
+	a.watchedFiles = make(map[string]bool)
+
+	return JSONResponse{Success: true, Data: "已停止所有文件监听"}
 }

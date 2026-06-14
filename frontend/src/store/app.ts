@@ -16,12 +16,18 @@ export interface Tab {
   }
 }
 
+export interface WatchedFile {
+  filePath: string
+  tabId: string
+}
+
 export const useAppStore = defineStore('app', () => {
   const tabs = ref<Tab[]>([])
   const activeTabId = ref<string | null>(null)
   const isDarkMode = ref(true)
   const themeColor = ref<'dark' | 'yellow' | 'green' | 'blue'>('dark')
   const globalFilter = ref('')
+  const watchedFiles = ref<WatchedFile[]>([]) // Track watched files and their associated tabs
 
   const activeTab = computed(() => 
     tabs.value.find(t => t.id === activeTabId.value) || null
@@ -91,6 +97,12 @@ export const useAppStore = defineStore('app', () => {
     // 如果是固定标签，不允许关闭
     if (tabs.value[index].isPinned) return
 
+    // Stop watching the file if it was being watched
+    const tab = tabs.value[index]
+    if (tab.filePath) {
+      removeWatchedFileByTabId(id)
+    }
+
     if (activeTabId.value === id) {
       const nextTab = tabs.value[index + 1] || tabs.value[index - 1]
       activeTabId.value = nextTab ? nextTab.id : null
@@ -125,6 +137,12 @@ export const useAppStore = defineStore('app', () => {
   }
 
   function closeOtherTabs(id: string) {
+    // Stop watching files for tabs that will be closed
+    tabs.value.forEach(t => {
+      if (t.id !== id && !t.isPinned && t.filePath) {
+        removeWatchedFileByTabId(t.id)
+      }
+    })
     tabs.value = tabs.value.filter(t => t.id === id || t.isPinned)
     activeTabId.value = id
     saveToStorage()
@@ -133,6 +151,12 @@ export const useAppStore = defineStore('app', () => {
   function closeTabsToLeft(id: string) {
     const index = tabs.value.findIndex(t => t.id === id)
     if (index === -1) return
+    // Stop watching files for tabs that will be closed
+    tabs.value.forEach((t, i) => {
+      if (i < index && !t.isPinned && t.filePath) {
+        removeWatchedFileByTabId(t.id)
+      }
+    })
     tabs.value = tabs.value.filter((t, i) => i >= index || t.isPinned)
     saveToStorage()
   }
@@ -140,11 +164,23 @@ export const useAppStore = defineStore('app', () => {
   function closeTabsToRight(id: string) {
     const index = tabs.value.findIndex(t => t.id === id)
     if (index === -1) return
+    // Stop watching files for tabs that will be closed
+    tabs.value.forEach((t, i) => {
+      if (i > index && !t.isPinned && t.filePath) {
+        removeWatchedFileByTabId(t.id)
+      }
+    })
     tabs.value = tabs.value.filter((t, i) => i <= index || t.isPinned)
     saveToStorage()
   }
 
   function closeAllTabs() {
+    // Stop watching all files
+    tabs.value.forEach(t => {
+      if (t.filePath) {
+        removeWatchedFileByTabId(t.id)
+      }
+    })
     tabs.value = tabs.value.filter(t => t.isPinned)
     if (tabs.value.length > 0) {
       activeTabId.value = tabs.value[0].id
@@ -154,6 +190,40 @@ export const useAppStore = defineStore('app', () => {
     saveToStorage()
   }
 
+  // File watcher methods
+  function addWatchedFile(filePath: string, tabId: string) {
+    const existing = watchedFiles.value.find(w => w.filePath === filePath)
+    if (!existing) {
+      watchedFiles.value.push({ filePath, tabId })
+    } else {
+      existing.tabId = tabId
+    }
+  }
+
+  function removeWatchedFile(filePath: string) {
+    const index = watchedFiles.value.findIndex(w => w.filePath === filePath)
+    if (index !== -1) {
+      watchedFiles.value.splice(index, 1)
+    }
+  }
+
+  function removeWatchedFileByTabId(tabId: string) {
+    watchedFiles.value = watchedFiles.value.filter(w => w.tabId !== tabId)
+  }
+
+  function getWatchedFileByPath(filePath: string): WatchedFile | undefined {
+    return watchedFiles.value.find(w => w.filePath === filePath)
+  }
+
+  function updateTabContentFromFile(tabId: string, content: string) {
+    const tab = tabs.value.find(t => t.id === tabId)
+    if (tab) {
+      tab.content = content
+      tab.isDirty = false // Reset dirty flag since content matches file
+      saveToStorage()
+    }
+  }
+
   return {
     tabs,
     activeTabId,
@@ -161,6 +231,7 @@ export const useAppStore = defineStore('app', () => {
     isDarkMode,
     themeColor,
     globalFilter,
+    watchedFiles,
     createTab,
     closeTab,
     updateTabContent,
@@ -171,6 +242,11 @@ export const useAppStore = defineStore('app', () => {
     closeTabsToRight,
     closeAllTabs,
     loadFromStorage,
-    saveToStorage
+    saveToStorage,
+    addWatchedFile,
+    removeWatchedFile,
+    removeWatchedFileByTabId,
+    getWatchedFileByPath,
+    updateTabContentFromFile
   }
 })

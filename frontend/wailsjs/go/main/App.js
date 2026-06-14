@@ -62,6 +62,18 @@ export function SaveFile(arg1, arg2) {
   return window['go']['main']['App']['SaveFile'](arg1, arg2);
 }
 
+export function UnwatchAllFiles() {
+  return window['go']['main']['App']['UnwatchAllFiles']();
+}
+
+export function UnwatchFile(arg1) {
+  return window['go']['main']['App']['UnwatchFile'](arg1);
+}
+
+export function WatchFile(arg1) {
+  return window['go']['main']['App']['WatchFile'](arg1);
+}
+
 export function WriteFileDirect(arg1, arg2) {
   return window['go']['main']['App']['WriteFileDirect'](arg1, arg2);
 }

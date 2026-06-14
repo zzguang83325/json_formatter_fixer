@@ -361,7 +361,8 @@ import {
   ConvertToYAML, ConvertToJavaClass, ConvertToGoStruct,
   ConvertToPythonClass, ConvertToTypeScriptInterface, ConvertToCSharpClass, ConvertToSQL,
   GetPathOffset, GetPathByOffset,
-  SaveFile, WriteFileDirect, ReadFile, RegisterAsDefaultEditor
+  SaveFile, WriteFileDirect, ReadFile, RegisterAsDefaultEditor,
+  WatchFile, UnwatchFile
 } from '../wailsjs/go/main/App'
 import { BrowserOpenURL, OnFileDrop, EventsOn } from '../wailsjs/runtime/runtime'
 
@@ -586,22 +587,92 @@ onMounted(() => {
   window.addEventListener('keydown', handleKeyDown)
   
   // 监听后端发送的打开文件事件（双击文件启动或外部调用）
-  EventsOn('open-file', (data: any) => {
-    if (data && data.path) {
-      // 检查是否已经打开了同一个路径
-      const existingTab = store.tabs.find(t => t.filePath === data.path)
-      if (existingTab) {
-        store.activeTabId = existingTab.id
-      } else {
-        store.createTab(data.name, data.content, data.path)
+    EventsOn('open-file', (data: any) => {
+      if (data && data.path) {
+        // 检查是否已经打开了同一个路径
+        const existingTab = store.tabs.find(t => t.filePath === data.path)
+        if (existingTab) {
+          store.activeTabId = existingTab.id
+        } else {
+          const newTab = store.createTab(data.name, data.content, data.path)
+          // 开始监听文件变化
+          startWatchingFile(data.path, newTab.id)
+        }
       }
-    }
+    })
+
+    // 监听文件变化事件
+    EventsOn('file-changed', async (data: any) => {
+      if (data && data.path && data.content !== undefined) {
+        handleFileChanged(data.path, data.content)
+      }
+    })
   })
-})
 
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', handleKeyDown)
 })
+
+// File watcher helper functions
+async function startWatchingFile(filePath: string, tabId: string) {
+  try {
+    const res = await WatchFile(filePath)
+    if (res.success) {
+      store.addWatchedFile(filePath, tabId)
+      console.log(`Started watching file: ${filePath}`)
+    }
+  } catch (e) {
+    console.error(`Failed to start watching file: ${filePath}`, e)
+  }
+}
+
+async function stopWatchingFile(filePath: string) {
+  try {
+    const res = await UnwatchFile(filePath)
+    if (res.success) {
+      store.removeWatchedFile(filePath)
+      console.log(`Stopped watching file: ${filePath}`)
+    }
+  } catch (e) {
+    console.error(`Failed to stop watching file: ${filePath}`, e)
+  }
+}
+
+function handleFileChanged(filePath: string, content: string) {
+  // Find the tab associated with this file
+  const watchedFile = store.getWatchedFileByPath(filePath)
+  if (!watchedFile) {
+    return
+  }
+
+  const tab = store.tabs.find(t => t.id === watchedFile.tabId)
+  if (!tab) {
+    return
+  }
+
+  // Check if the content has actually changed
+  if (tab.content === content) {
+    return
+  }
+
+  // If the tab has unsaved changes, show a confirmation dialog
+  if (tab.isDirty) {
+    dialog.warning({
+      title: '文件已被外部修改',
+      content: `文件 "${tab.name}" 已被其他程序修改。是否重新加载？您的未保存更改将丢失。`,
+      positiveText: '重新加载',
+      negativeText: '保持当前内容',
+      onPositiveClick: () => {
+        store.updateTabContentFromFile(watchedFile.tabId, content)
+        message.info(`文件已重新加载: ${tab.name}`)
+      }
+    })
+  } else {
+    // No unsaved changes, just update the content
+    store.updateTabContentFromFile(watchedFile.tabId, content)
+    message.info(`文件已更新: ${tab.name}`)
+  }
+}
 
 function createNewTab() {
   store.createTab()

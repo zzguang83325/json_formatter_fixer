@@ -32,4 +32,10 @@ export function RegisterAsDefaultEditor():Promise<main.JSONResponse>;
 
 export function SaveFile(arg1:string,arg2:string):Promise<main.JSONResponse>;
 
+export function UnwatchAllFiles():Promise<main.JSONResponse>;
+
+export function UnwatchFile(arg1:string):Promise<main.JSONResponse>;
+
+export function WatchFile(arg1:string):Promise<main.JSONResponse>;
+
 export function WriteFileDirect(arg1:string,arg2:string):Promise<main.JSONResponse>;
